@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>IG</title>
+<style>
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 400;
+  src: url("../fonts/ShopeeNotoSans(content)-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 700;
+  src: url("../fonts/ShopeeNotoSans(content)-Bold.ttf") format("truetype");
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #1a1a1a;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#stage { position: relative; }
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 900px; height: 1600px;
+  overflow: hidden;
+  transform-origin: top left;
+  background: #fce4ec;
+}
+#底圖 {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1; pointer-events: none; display: none;
+}
+#css-err {
+  display: none; position: fixed;
+  top: 14px; left: 50%; transform: translateX(-50%);
+  background: #7f1d1d; color: #fca5a5;
+  font-size: 13px; font-family: monospace;
+  padding: 7px 16px; border-radius: 6px; z-index: 9999;
+}
+</style>
+</head>
+<body data-fw="900" data-fh="1600">
+<div id="css-err"></div>
+<div id="stage">
+  <div id="canvas">
+    <img id="底圖" src="" alt="">
+
+    <!-- ══ LOGO 區域（flex 置中模式）══ -->
+    <div class="LOGO範圍" style="pointer-events:none;">
+      <div class="蝦導播LOGO範圍" style="pointer-events:none;">
+        <img class="蝦導播官方LOGO"
+             src="../img/蝦導播logo_直式_橘.png"
+             alt="蝦導播"
+             onerror="this.style.display='none'"
+             style="width:100%; height:100%;
+                    object-fit:contain; object-position:left center;
+                    display:block; pointer-events:none;">
+      </div>
+      <div class="分隔線" style="pointer-events:none;"></div>
+      <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
+    </div>
+
+    <!-- ══ 蝦皮角標（右上角）══
+         ★ 固定顯示 ig_logo.png，不需要顏色切換
+         ★ 不加 bn-shopee-logo script
+    -->
+    <div class="蝦皮LOGO範圍" style="pointer-events:none;">
+      <img src="../img/ig_logo.png"
+           alt="蝦皮購物"
+           onerror="this.style.display='none'"
+           style="width:100%; height:100%;
+                  object-fit:contain; object-position:center;
+                  display:block; pointer-events:none;">
+    </div>
+
+    <!-- 其他圖層由 layout-runtime.js 動態建立 -->
+
+  </div>
+</div>
+
+<!-- ══ IG bar 雙側透明漸層覆寫 ══
+     layout-runtime.js 預設只有左側淡出（transparent→color），
+     IG 設計需要兩側都淡出（transparent→color→transparent）。
+     setTimeout(0) 確保在 runtime 設定之後才覆寫。
+-->
+<script>
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'bn-color-ext' || !e.data.barBg) return;
+  var barColor = e.data.barBg;
+  setTimeout(function() {
+    document.querySelectorAll('.bar範圍').forEach(function(el) {
+      el.style.background =
+        'linear-gradient(to right, transparent 0%, ' + barColor + ' 20%, ' + barColor + ' 80%, transparent 100%)';
+    });
+  }, 0);
+});
+</script>
+<script src="../js/layout-runtime.js"></script>
+</body>
+</html>

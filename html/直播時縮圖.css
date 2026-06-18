@@ -1,0 +1,77 @@
+.直播時縮圖 {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 720px;
+  height: 720px;
+  z-index: 60;
+}
+.廠商LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity:1;
+  position: absolute;
+  left: 481px;
+  top: 108px;
+  width: 97px;
+  height: 45px;
+  z-index: 59;
+}
+.蝦導播LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity:1;
+  position: absolute;
+  left: 144px;
+  top: 111px;
+  width: 317px;
+  height: 36px;
+  z-index: 58;
+}
+.分隔線 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 470px;
+  top: 118px;
+  width: 2px;
+  height: 25px;
+  z-index: 57;
+}
+.日期 {
+  font-size: 34.661px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(35, 85, 141);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 0.9517152460664,0,-1.06326480556126e-16,0.95590737525969,0,0);
+  -webkit-transform: matrix( 0.9517152460664,0,-1.06326480556126e-16,0.95590737525969,0,0);
+  -ms-transform: matrix( 0.9517152460664,0,-1.06326480556126e-16,0.95590737525969,0,0);
+  transform: matrix( 0.9517152460664,0,-1.06326480556126e-16,0.95590737525969,0,0);
+  position: absolute;
+  left: 276.894px;
+  top: 234.532px;
+  z-index: 56;
+}
+.副標 {
+  font-size: 83.664px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(32, 132, 244);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 0.73182785601327,-3.63414950082104e-16,0,0.73145118841278,0,0);
+  -webkit-transform: matrix( 0.73182785601327,-3.63414950082104e-16,0,0.73145118841278,0,0);
+  -ms-transform: matrix( 0.73182785601327,-3.63414950082104e-16,0,0.73145118841278,0,0);
+  transform: matrix( 0.73182785601327,-3.63414950082104e-16,0,0.73145118841278,0,0);
+  position: absolute;
+  left: 86.001px;
+  top: 146.009px;
+  z-index: 55;
+}
+.商品範圍 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 120px;
+  top: 285px;
+  width: 480px;
+  height: 440px;
+  z-index: 54;
+}

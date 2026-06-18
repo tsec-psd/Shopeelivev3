@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>直播時縮圖</title>
+<style>
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 400;
+  src: url("../fonts/ShopeeNotoSans(content)-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 700;
+  src: url("../fonts/ShopeeNotoSans(content)-Bold.ttf") format("truetype");
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #1a1a1a;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#stage { position: relative; }
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 720px; height: 720px;
+  overflow: hidden;
+  transform-origin: top left;
+  background: #fce4ec;
+}
+#底圖 {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1; pointer-events: none; display: none;
+}
+#css-err {
+  display: none; position: fixed;
+  top: 14px; left: 50%; transform: translateX(-50%);
+  background: #7f1d1d; color: #fca5a5;
+  font-size: 13px; font-family: monospace;
+  padding: 7px 16px; border-radius: 6px; z-index: 9999;
+}
+
+/* ── 遮罩開關按鈕 ──
+   position: fixed → 固定在 iframe 視窗右下角
+   不受 #canvas 的 transform scale 影響
+   不在 #canvas 內，html2canvas 擷取時不會被截到 */
+#mask-toggle {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 20px;
+  font-size: 13px;
+  font-family: sans-serif;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+#mask-toggle.is-on  { background: #1565c0; color: #fff; }
+#mask-toggle.is-off { background: #555;    color: #ccc; opacity: 0.75; }
+</style>
+</head>
+<body data-fw="720" data-fh="720">
+<div id="css-err"></div>
+<div id="stage">
+  <div id="canvas">
+    <img id="底圖" src="" alt="">
+
+    <!-- ══ LOGO 區域（flex 置中模式）══ -->
+    <div class="LOGO範圍" style="pointer-events:none;">
+      <div class="蝦導播LOGO範圍" style="pointer-events:none;">
+        <img class="蝦導播官方LOGO"
+             src="../img/shopee-live-logo.png"
+             alt="蝦導播"
+             onerror="this.style.display='none'"
+             style="width:100%; height:100%;
+                    object-fit:contain; object-position:left center;
+                    display:block; pointer-events:none;">
+      </div>
+      <div class="分隔線" style="pointer-events:none;"></div>
+      <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
+    </div>
+
+    <!-- 其他圖層由 layout-runtime.js 動態建立 -->
+
+    <!-- ══ 直播遮罩（最上層）══
+         ★ z-index: 200 → 蓋在所有設計圖層上方
+         ★ pointer-events: none → 不阻擋下層互動
+         ★ 預設顯示（display: block）
+         ★ data-no-capture="true" → html2canvas 截圖時自動排除（只是預覽用）
+    -->
+    <img id="live-mask"
+         src="../img/直播縮圖_遮罩.png"
+         alt="直播遮罩"
+         data-no-capture="true"
+         onerror="this.style.display='none'"
+         style="position:absolute; top:0; left:0;
+                width:100%; height:100%;
+                z-index:200;
+                pointer-events:none;
+                display:block;">
+  </div>
+</div>
+
+<!-- ══ 遮罩開關按鈕（固定在視窗右下角，不在畫布內）══ -->
+<button id="mask-toggle" class="is-on" onclick="toggleMask()">
+  ▣ 遮罩
+</button>
+
+<script>
+/* 遮罩開關：切換 #live-mask 的 display，同步更新按鈕樣式 */
+function toggleMask() {
+  var mask = document.getElementById('live-mask');
+  var btn  = document.getElementById('mask-toggle');
+  var isOn = mask.style.display !== 'none';
+
+  if (isOn) {
+    /* 遮罩關閉 */
+    mask.style.display = 'none';
+    btn.textContent    = '▣ 遮罩';
+    btn.className      = 'is-off';
+  } else {
+    /* 遮罩開啟 */
+    mask.style.display = 'block';
+    btn.textContent    = '▣ 遮罩';
+    btn.className      = 'is-on';
+  }
+}
+</script>
+
+<script src="../js/layout-runtime.js"></script>
+</body>
+</html>

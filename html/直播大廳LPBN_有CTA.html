@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>直播大廳 LPBN 有CTA</title>
+<style>
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 400;
+  src: url("../fonts/ShopeeNotoSans(content)-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 700;
+  src: url("../fonts/ShopeeNotoSans(content)-Bold.ttf") format("truetype");
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width:100%; height:100%;
+  background:#1a1a1a;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+#stage { position: relative; }
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 1125px; height: 360px;
+  overflow: hidden;
+  transform-origin: top left;
+  background: #87ceeb;
+}
+#底圖 {
+  position:absolute; top:0; left:0;
+  width:100%; height:100%;
+  z-index:1; pointer-events:none; display:none;
+}
+#css-err {
+  display:none; position:fixed;
+  top:14px; left:50%; transform:translateX(-50%);
+  background:#7f1d1d; color:#fca5a5;
+  font-size:13px; font-family:monospace;
+  padding:7px 16px; border-radius:6px; z-index:9999;
+}
+</style>
+</head>
+<body data-fw="1125" data-fh="360">
+<div id="css-err"></div>
+<div id="stage">
+  <div id="canvas">
+    <img id="底圖" src="" alt="">
+
+    <!-- ══ LOGO 區域 ══
+         架構說明：
+           .LOGO範圍     → 整個 LOGO 帶的容器（全畫布大小，作為定位基準）
+           .蝦導播LOGO範圍 → 靜態，固定放置蝦導播官方 LOGO（不受 bn-logos 影響）
+           .分隔線       → 靜態分隔線
+           .廠商LOGO範圍 → 動態，layout-runtime.js 把廠商 LOGO 注入到這裡
+                           （由 config.css 的 --logo-target: "廠商LOGO範圍" 指定）
+    -->
+    <div class="LOGO範圍" style="pointer-events:none;">
+
+      <!-- 蝦導播官方 LOGO：靜態放置，固定大小，永遠顯示 -->
+      <div class="蝦導播LOGO範圍" style="pointer-events:none;">
+        <img class="蝦導播官方LOGO"
+             src="../img/shopee-live-logo.png"
+             alt="蝦導播"
+             onerror="this.style.display='none'"
+             style="width:100%; height:100%;
+                    object-fit:contain; object-position:left center;
+                    display:block; pointer-events:none;">
+      </div>
+
+      <!-- 分隔線：只在有廠商 LOGO 時才顯示，由 config.css 控制 -->
+      <div class="分隔線" style="pointer-events:none;"></div>
+
+      <!-- 廠商 LOGO 注入目標：layout-runtime.js 把使用者上傳的廠商 LOGO 放這裡 -->
+      <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
+
+    </div>
+
+    <!--
+      其他圖層（bar範圍、CTA、文字、商品範圍）
+      由 layout-runtime.js 讀取 config.css 的 --layers 動態建立
+      ★ CTA 例外：使用靜態 <img> 固定圖片，不由 --layers 動態建立
+    -->
+    <img class="CTA" src="../img/CTA.png" alt="立即看"
+         onerror="this.style.display='none'"
+         style="display:block; pointer-events:none;">
+
+  </div>
+</div>
+<script src="../js/layout-runtime.js"></script>
+</body>
+</html>

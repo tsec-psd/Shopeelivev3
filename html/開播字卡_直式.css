@@ -1,0 +1,92 @@
+.開播字卡_直式 {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 1080px;
+  height: 1920px;
+  z-index: 42;
+}
+.日期 {
+  font-size: 34.661px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(35, 85, 141);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.02210626453847,1.35863453407642e-15,-1.14190628249285e-16,1.02660845311633,0,0);
+  -webkit-transform: matrix( 1.02210626453847,1.35863453407642e-15,-1.14190628249285e-16,1.02660845311633,0,0);
+  -ms-transform: matrix( 1.02210626453847,1.35863453407642e-15,-1.14190628249285e-16,1.02660845311633,0,0);
+  transform: matrix( 1.02210626453847,1.35863453407642e-15,-1.14190628249285e-16,1.02660845311633,0,0);
+  position: absolute;
+  left: 660.895px;
+  top: 754.532px;
+  z-index: 41;
+}
+.主標 {
+  font-size: 48px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(34, 85, 142);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.20619067968905,0,0,1.21150372598299,0,0);
+  -webkit-transform: matrix( 1.20619067968905,0,0,1.21150372598299,0,0);
+  -ms-transform: matrix( 1.20619067968905,0,0,1.21150372598299,0,0);
+  transform: matrix( 1.20619067968905,0,0,1.21150372598299,0,0);
+  position: absolute;
+  left: 282.458px;
+  top: 734.265px;
+  z-index: 40;
+}
+.副標 {
+  font-size: 83.664px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(32, 132, 244);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.3373628282759,-1.07884762635353e-15,0,1.3366744952979,0,0);
+  -webkit-transform: matrix( 1.3373628282759,-1.07884762635353e-15,0,1.3366744952979,0,0);
+  -ms-transform: matrix( 1.3373628282759,-1.07884762635353e-15,0,1.3366744952979,0,0);
+  transform: matrix( 1.3373628282759,-1.07884762635353e-15,0,1.3366744952979,0,0);
+  position: absolute;
+  left: 263.501px;
+  top: 816.009px;
+  z-index: 39;
+}
+.商品範圍 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 79px;
+  top: 960px;
+  width: 922px;
+  height: 961px;
+  z-index: 38;
+}
+.廠商LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 0.51;
+  position: absolute;
+  left: 600px;
+  top: 608px;
+  width: 218px;
+  height: 100px;
+  z-index: 37;
+}
+.分隔線 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 580px;
+  top: 634px;
+  width: 3px;
+  height: 48px;
+  z-index: 36;
+}
+.蝦導播LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 0.51;
+  position: absolute;
+  left: 264px;
+  top: 608px;
+  width: 301px;
+  height: 102px;
+  z-index: 35;
+}

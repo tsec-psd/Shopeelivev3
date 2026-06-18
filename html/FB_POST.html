@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>FB POST</title>
+<style>
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 400;
+  src: url("../fonts/ShopeeNotoSans(content)-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 700;
+  src: url("../fonts/ShopeeNotoSans(content)-Bold.ttf") format("truetype");
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #1a1a1a;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#stage { position: relative; }
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 1200px; height: 630px;
+  overflow: hidden;
+  transform-origin: top left;
+  background: #e7dfd8;
+}
+#底圖 {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1; pointer-events: none; display: none;
+}
+#css-err {
+  display: none; position: fixed;
+  top: 14px; left: 50%; transform: translateX(-50%);
+  background: #7f1d1d; color: #fca5a5;
+  font-size: 13px; font-family: monospace;
+  padding: 7px 16px; border-radius: 6px; z-index: 9999;
+}
+</style>
+</head>
+<body data-fw="1200" data-fh="630">
+<div id="css-err"></div>
+<div id="stage">
+  <div id="canvas">
+    <img id="底圖" src="" alt="">
+
+    <!-- ══ LOGO 區域 ══ -->
+    <div class="LOGO範圍" style="pointer-events:none;">
+      <div class="蝦導播LOGO範圍" style="pointer-events:none;">
+        <img class="蝦導播官方LOGO"
+             src="../img/shopee-live-logo.png"
+             alt="蝦導播"
+             onerror="this.style.display='none'"
+             style="width:100%; height:100%;
+                    object-fit:contain; object-position:left center;
+                    display:block; pointer-events:none;">
+      </div>
+      <div class="分隔線" style="pointer-events:none;"></div>
+      <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
+    </div>
+
+    <!-- ══ 蝦皮角標 ══
+         ★ class="蝦皮官方LOGO" 讓下方 script 可以偵測到此圖片，
+           跟隨 bn-shopee-logo 訊號切換橘色 / 白色（CSS filter）
+    -->
+    <div class="蝦皮LOGO範圍" style="pointer-events:none;">
+      <img class="蝦皮官方LOGO"
+           src="../img/shopee-icon.png"
+           alt="Shopee"
+           onerror="this.style.display='none'"
+           style="width:100%; height:100%;
+                  object-fit:contain; object-position:center;
+                  display:block; pointer-events:none;">
+    </div>
+
+    <!-- 其他圖層由 layout-runtime.js 動態建立 -->
+
+  </div>
+</div>
+
+<!-- ══ 蝦皮角標 LOGO 顏色同步 ══
+     layout-runtime.js 的 bn-shopee-logo 只更新 .蝦導播官方LOGO，
+     此 script 攔截同一個訊號，讓 .蝦皮官方LOGO 也跟著切換圖片：
+       淺色背景（e.data.white = false）→ shopee-icon.png   （彩色版）
+       深色背景（e.data.white = true） → shopee-icon-w.png （白色版）
+     ★ 機制與蝦導播官方LOGO 的 src 換圖完全一致
+     ★ 須在 layout-runtime.js 之前宣告，確保監聽器先註冊
+-->
+<script>
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'bn-shopee-logo') return;
+  var el = document.querySelector('.蝦皮官方LOGO');
+  if (!el) return;
+  /* 對齊蝦導播官方LOGO 的換圖邏輯：直接切換 src，不用 CSS filter */
+  el.src = e.data.white
+    ? '../img/shopee-icon-w.png'   /* 白色版：深色背景使用 */
+    : '../img/shopee-icon.png';    /* 彩色版：淺色背景使用 */
+});
+</script>
+
+<script src="../js/layout-runtime.js"></script>
+</body>
+</html>

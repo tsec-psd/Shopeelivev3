@@ -1,0 +1,195 @@
+/* ================================================
+   [版位名稱].config.css  ← 直式版位（Flex 置中 LOGO）
+   適用：IG、開播字卡、直式 FB 等直立畫布
+   ★ 只填這份，不需要動 PS 匯出的 .css
+   ================================================
+
+   填寫步驟：
+   1. 搜尋所有 ??? 並替換成你的數值
+   2. 不需要的區塊整段刪除（見各區塊說明）
+   ================================================ */
+
+:root {
+
+  /* ① 畫布尺寸 ───────────────────────────────── */
+  --canvas-w: 1080px;    /* PS 文件寬度，例：1080 */
+  --canvas-h: 1920px;    /* PS 文件高度，例：1920 */
+  --canvas-bg: #fce4ec; /* 預設背景色 */
+  --bg-img: ;           /* 有底圖填路徑，沒有留空 */
+
+
+  /* ② 圖層清單 ───────────────────────────────────
+     格式：class名稱|預設文字
+     ★ LOGO範圍 已在 HTML 靜態宣告，不要寫在這
+     ★ CTA 是靜態 <img>，不要寫在這
+     ─────────────────────────────────────────────
+     [直式常見組合，選一個刪掉其他]
+
+     主副標 + 購物專家：
+     "商品範圍|,主標|???文字,副標|???文字,購物專家|???文字"
+
+     只有副標（無主標）：
+     "商品範圍|,副標|???文字"
+
+     加 bar：
+     "商品範圍|,bar範圍|,主標|???文字,副標|???文字,購物專家|???文字"
+  ─────────────────────────────────────────────── */
+  --layers: "商品範圍|,bar範圍|,主標|直播灑50%蝦幣回饋,日期|5/31 21:00,副標|整點搶優惠";
+  --cta-classes: "";    /* 通常留空 */
+
+
+  /* ③ LOGO 設定 ──────────────────────────────── */
+  --logo-mode: "flex";           /* 直式版位固定用 flex（置中模式） */
+  --logo-target: "廠商LOGO範圍";  /* 通常不用改 */
+
+  /* 廠商 LOGO 容器最大尺寸（數字，不加 px）
+     必須與下方 .廠商LOGO範圍 的 width/height 一致 */
+  --logo-zone-w: 218; /* 例：120 */
+  --logo-zone-h: 100 ; /* 例：60  */
+
+  /* 直式蝦導播 LOGO（橘/白版本） */
+  --shopee-logo-orange: "../img/蝦導播logo_直式_橘.png";
+  --shopee-logo-white:  "../img/蝦導播logo_直式_白.png";
+
+  /* 日期跟隨主標：center = 主標＋日期整串水平置中 */
+  --date-follow-headline: "center";
+
+
+  /* ④ 人物圖定位 ─────────────────────────────────
+     不需要人物 → 刪除以下三行
+  ─────────────────────────────────────────────── */
+  --bn-person-x:      0%;  /* 人物左邊緣水平位置（商品範圍 %） */
+  --bn-person-bottom: 0%;  /* 距商品範圍底部，貼底填 0%        */
+  --bn-person-h:      90%;  /* 人物高度，全身建議 90%～120%      */
+
+
+  /* ⑤ 商品圖 Slot ─────────────────────────────────
+     不需要商品圖 Slot → 刪除以下全部（改用底部自動排列）
+  ─────────────────────────────────────────────── */
+  --bn-prod-0-x: 80%;  --bn-prod-0-y: 50%;  --bn-prod-0-h: 54%;
+  --bn-prod-1-x: 60%;  --bn-prod-1-y: 40%;  --bn-prod-1-h: 40%;
+  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;
+
+/* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
+  --shadow-grad-from: 35;   /* 陰影可見範圍左邊界 */
+  --shadow-left-x:    23;   /* 多邊形左上角，需 ≤ grad-from */
+  --shadow-slant-x:   80;   /* 斜角方向 */
+  --shadow-top-y:    60;   /* 地平線高度 */
+  --shadow-bottom-y: 100;   /* 預設 115（延伸出畫布），調小讓下緣往上收 */
+
+  /* 質感 */
+  --shadow-blur:       3;              /* 上緣銳利設 0，柔化設 4~12 */
+  --shadow-bottom-fade: 80;            /* 下緣淡出範圍（%），0 = 不淡出 */
+  --shadow-left-fade: 80;   /* 左側斜邊往內 40px 漸隱，數字越大越柔 */
+  /* 深淺 */
+  --shadow-alpha: 0.4;   /* 0.0（完全透明）~ 1.0（完全不透明），預設約 0.22 */
+}
+
+
+/* ══════════════════════════════════════════════
+   以下 CSS 直接填 PS 的 X/Y，不用改結構
+   ══════════════════════════════════════════════ */
+
+
+/* transform-origin 全域修正（必填，直接複製，不改） */
+* { transform-origin: 0 0; }
+
+
+/* ⑥ 文字圖層位置 ─────────────────────────────────
+   → PS 變形面板取 X（=left）、Y（=top）
+   → 沒有的欄位整行刪除
+─────────────────────────────────────────────── */
+.主標 { left: 247.78px; top: 734.21px; line-height: 1; white-space: nowrap; }
+
+/* 副標：水平置中（width:100% + text-align:center + transform-origin 從中心縮放）*/
+.副標 {
+  left:   0 !important;
+  right:  0 !important;
+  width:  100% !important;
+  top:    809.96px;
+  text-align: center !important;
+  white-space: nowrap;
+  line-height: 1;
+  transform-origin: 50% 0 !important;
+}
+
+/* 日期：初始位置（center 模式啟用後 JS 會覆蓋 left，top 維持此值）*/
+.日期 { left: 659.41px; top: 755.28px; line-height: 1; white-space: nowrap; }
+
+
+
+/* 透明背景（必填，直接複製，不改） */
+.LOGO範圍 { background-color: transparent !important; opacity: 1; }
+.商品範圍 { background-color: transparent !important; opacity: 1; }
+
+
+/* ══════════════════════════════════════════════
+   ⑦ LOGO 條整體：Flex 橫排，水平置中
+   → top：LOGO 條上緣 Y 座標（PS 變形面板）
+   → height：LOGO 條高度（PS 量取）
+   ══════════════════════════════════════════════ */
+.LOGO範圍 {
+  position: absolute !important;
+  left: 0 !important;
+  top:    608.5px !important;   /* LOGO 條上緣 Y，從 PS 取 */
+  width:  100% !important;
+  height: 100px !important;   /* LOGO 條高度，從 PS 取   */
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 15px !important;      /* 元素間距，建議 12～20px  */
+  background-color: transparent !important;
+}
+
+
+/* ⑧ 蝦導播 LOGO 範圍 ────────────────────────────
+   → position: relative（flex item，不用 absolute）
+   → W / H 從 PS 變形面板取
+─────────────────────────────────────────────── */
+.蝦導播LOGO範圍 {
+  position: relative !important;  /* ★ flex item，不改 */
+  left: auto !important;
+  top:  auto !important;
+  width:  300px !important;
+  height: 100px !important;
+  flex-shrink: 0 !important;      /* 不縮小 */
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+
+/* ⑨ 分隔線 ──────────────────────────────────────
+   → position: relative（flex item）
+   → height 建議 = 蝦導播LOGO高度 × 0.6
+   → background-color 跟設計稿顏色（系統會自動切橘/白）
+─────────────────────────────────────────────── */
+.分隔線 {
+  position: relative !important;  /* ★ flex item，不改 */
+  left: auto !important;
+  top:  auto !important;
+  width:  2px !important;
+  height: 60px !important;       /* 建議：蝦導播LOGO高度 × 0.6 */
+  flex-shrink: 0 !important;
+  background-color: #EE4D2D;          /* 橘：#EE4D2D / 白：#FFFFFF   */
+}
+
+
+/* ⑩ 廠商 LOGO 範圍 ──────────────────────────────
+   → position: relative（flex item）
+   → width/height = 最大允許尺寸，必須與 --logo-zone-w/h 一致
+   → flex-shrink: 1 → logo 過大時自動縮小
+─────────────────────────────────────────────── */
+.廠商LOGO範圍 {
+  position: relative !important;  /* ★ flex item，不改 */
+  left: auto !important;
+  top:  auto !important;
+  width:  218px !important;       /* = --logo-zone-w */
+  height: 100px !important;       /* = --logo-zone-h */
+  flex-shrink: 1 !important;      /* 可自動縮小 */
+  overflow: hidden;
+  background-color: transparent !important;
+}
+.廠商LOGO範圍  { opacity: 1 !important; }
+.蝦導播LOGO範圍 { opacity: 1 !important; }
+

@@ -1,0 +1,159 @@
+/* ================================================
+   直播大廳LPBN_有CTA.config.css
+   ★ 系統設定檔，不要貼 PS 的 CSS 進來
+   ★ PS 維護的 CSS（直播大廳LPBN_有CTA.css）完全不需要修改
+   ================================================ */
+
+:root {
+  --canvas-w: 1125px;
+  --canvas-h: 360px;
+  --canvas-bg: #fce4ec;
+  --bg-img: ;
+
+  /*
+   圖層清單：class名稱|預設文字
+   ★ 逗號是圖層分隔符，文字內容不可含逗號
+   ★ 順序由低 z-index 到高 z-index
+   ★ CTA 已改為 HTML 靜態 <img>，不在此動態建立
+  */
+  --layers: "商品範圍|,bar範圍|,主標|直播灑50%蝦幣回饋,日期|5/31 21:00,副標|整點搶優惠,購物專家|購物專家｜蔡佩芳";
+  /* ★ LOGO範圍 已在 HTML 靜態宣告（含 .蝦導播LOGO範圍/.廠商LOGO範圍/.分隔線），
+     不可在 --layers 動態建立，否則會產生兩個重疊的 .LOGO範圍 */
+  --cta-classes: "";
+
+  /* LOGO 排版模式：HBN = 水平並排，scale 到容器內 */
+  --logo-mode: "hbn";
+
+  /* 廠商 LOGO 注入目標：指定哪個 class 接收上傳的廠商 LOGO */
+  --logo-target: "廠商LOGO範圍";
+
+  /* 日期跟隨主標："1" = 開啟，主標更新後自動重算日期 left */
+  --date-follow-headline: "1";
+
+  /* ★ 廠商 LOGO 容器精確尺寸（供 layout-runtime.js HBN 排列使用）
+     對應 config.css 的 .廠商LOGO範圍 width/height
+     layout-runtime.js 優先讀這兩個變數，確保 LOGO 限制在正確範圍內 */
+  --logo-zone-w: 125;
+  --logo-zone-h: 57;
+
+ /* ── 人物圖（底部錨定，X 為左邊緣）────────────────────────
+     --bn-person-x      : 人物左邊緣的水平位置（商品範圍寬度 %）
+                          0% = 貼齊商品範圍最左邊
+     --bn-person-bottom : 距離商品範圍底部的距離（0% = 貼底）
+     --bn-person-h      : 人物圖高度（商品範圍高度 %）
+                          全身圖可設大一點（如 120%），再向下拖移成半身
+     → 刪除這三行 = 此版位不顯示人物（Fallback B）          */
+  --bn-person-x:      0%;    /* 靠最左邊 */
+  --bn-person-bottom: 0%;
+  --bn-person-h:      90%;
+ 
+  /* ── 商品圖 Slot（X/Y = 中心點，H = 高度，均為商品範圍 %）
+     Slot 0 = 上傳的第 1 張（主商品）
+     Slot 1 = 第 2 張
+     Slot 2 = 第 3 張
+     → 某個 Slot 不定義 = 那個位置不顯示（Fallback B）      */
+ 
+  /* Slot 0：主商品，右側偏上 */
+  --bn-prod-0-x: 80%;
+  --bn-prod-0-y: 50%;
+  --bn-prod-0-h: 54%;
+ 
+  /* Slot 1：第 2 張，中間偏左上 */
+  --bn-prod-1-x: 60%;
+  --bn-prod-1-y: 40%;
+  --bn-prod-1-h: 40%;
+ 
+  /* Slot 2：第 3 張，中間偏左更上 */
+  --bn-prod-2-x: 68%;
+  --bn-prod-2-y: 28%;
+  --bn-prod-2-h: 32%;
+ 
+ /* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
+  --shadow-grad-from: 65;   /* 陰影可見範圍左邊界 */
+  --shadow-left-x:    60;   /* 多邊形左上角，需 ≤ grad-from */
+  --shadow-slant-x:   80;   /* 斜角方向 */
+  --shadow-top-y:    45;   /* 地平線高度 */
+  --shadow-bottom-y: 100;   /* 預設 115（延伸出畫布），調小讓下緣往上收 */
+
+  /* 質感 */
+  --shadow-blur:       3;              /* 上緣銳利設 0，柔化設 4~12 */
+  --shadow-bottom-fade: 80;            /* 下緣淡出範圍（%），0 = 不淡出 */
+  --shadow-left-fade: 40;   /* 左側斜邊往內 40px 漸隱，數字越大越柔 */
+  /* 深淺 */
+  --shadow-alpha: 0.4;   /* 0.0（完全透明）~ 1.0（完全不透明），預設約 0.22 */
+}
+
+
+/* ── transform-origin 全域修正 ──────────────────
+   PS 匯出的 left/top 以元素左上角為基準計算，
+   瀏覽器預設 transform-origin: 50% 50% 會造成偏移。
+   統一改為 0 0，完全符合 PS 的座標系統。
+   所有圖層自動生效，不需要逐一設定。
+─────────────────────────────────────────────── */
+* { transform-origin: 0 0; }
+
+/* ── 文字圖層位置覆寫 ────────────────────────────
+   對齊 HBN 版位的做法：在 config.css 裡明確覆寫 left/top
+   值來自 PS 匯出的 CSS（bounding box 左上角座標）
+   若與設計稿仍有偏差，依 PS 變形面板的 X/Y 手動微調
+──────────────────────────────────────────── */
+.主標     { left: 47.34px;  top: 115.33px; line-height: 1; white-space: nowrap; }
+.副標     { left: 45.02px;  top: 164.99px; line-height: 1; white-space: nowrap; }
+.日期     { left: 336.8px; top: 128px; line-height: 1; white-space: nowrap; }
+.購物專家 {
+  /* 方案 A：right 定位 + transform-origin 右上角
+     transform-origin: 100% 0 讓 matrix 縮放從右上角開始，
+     確保視覺右側永遠貼著 right:10px，不隨文字長度位移 */
+  left: auto !important;
+  right: 10px;
+  top: 322.77px;
+  line-height: 1;
+  white-space: nowrap;
+  transform-origin: 100% 0 !important; /* 覆寫全域的 0 0，改為右上角縮放 */
+  max-width: 580px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── LOGO 範圍、商品範圍：透明背景避免遮住子內容 ── */
+.LOGO範圍  { background-color: transparent !important; opacity: 1; }
+.商品範圍  { background-color: transparent !important; opacity: 1; }
+
+/* ── 廠商 LOGO 範圍：精確尺寸定義 ──
+   width/height 必須明確設定，確保 layout-runtime.js HBN 模式
+   用 getComputedStyle 讀到正確的容器尺寸，LOGO 才能限制在範圍內
+   不設定時 div 預設 width:100%（繼承父容器 1125px），LOGO 會鋪滿畫布 */
+.廠商LOGO範圍 {
+  position: absolute !important;
+  left: 504px !important;
+  top: 53px !important;
+  width: 125px !important;
+  height: 57px !important;
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+/* ── 蝦導播 LOGO 範圍 ── */
+.蝦導播LOGO範圍 {
+  position: absolute !important;
+  left: 47px !important;
+  top: 58px !important;
+  width: 426px !important;
+  height: 45px !important;
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+/* ── CTA：靜態圖片定位（img/CTA.png）──
+   位置與尺寸對應 PS 設計稿的 .CTA 圖層
+   圖片不存在時由 HTML 的 onerror 自動隱藏 */
+.CTA {
+  position: absolute;
+  left: 54px;
+  top: 253px;
+  width: 218px;
+  height: 69px;
+  z-index: 17;
+  background-color: transparent !important;
+  object-fit: contain;
+}

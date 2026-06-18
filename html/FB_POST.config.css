@@ -1,0 +1,111 @@
+/* ================================================
+   FB_POST.config.css
+   ★ 系統設定檔，不要貼 PS 的 CSS 進來
+   ================================================ */
+
+:root {
+
+  /* ── 畫布尺寸 ── */
+  --canvas-w: 1200px;
+  --canvas-h: 630px;
+  --canvas-bg: #e7dfd8;
+  --bg-img: ;
+
+  /* ── 圖層清單 ──
+     ★ 修正：移除「購物專家」（此版位無主持）
+     ★ bar範圍 保留供日後補 CSS 使用
+  */
+  --layers: "商品範圍|,bar範圍|,主標|主標,日期|5/31 21:00,副標|副標";
+  --cta-classes: "";
+
+  /* ── LOGO 設定 ── */
+  --logo-mode: "hbn";
+  --logo-target: "廠商LOGO範圍";
+
+  /* ★ 問題 1 修正：移除 --date-follow-headline
+     日期位置固定，不跟隨主標右側移動 */
+
+  --logo-zone-w: 141;
+  --logo-zone-h: 57;
+
+  /* ── 人物圖定位 ── */
+  --bn-person-x:      0%;
+  --bn-person-bottom: 0%;
+  --bn-person-h:      90%;
+
+  /* ── 商品圖 Slot ── */
+  --bn-prod-0-x: 80%;  --bn-prod-0-y: 50%;  --bn-prod-0-h: 54%;
+  --bn-prod-1-x: 60%;  --bn-prod-1-y: 40%;  --bn-prod-1-h: 40%;
+  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;
+
+/* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
+  --shadow-grad-from: 65;   /* 陰影可見範圍左邊界 */
+  --shadow-left-x:    60;   /* 多邊形左上角，需 ≤ grad-from */
+  --shadow-slant-x:   80;   /* 斜角方向 */
+  --shadow-top-y:    45;   /* 地平線高度 */
+  --shadow-bottom-y: 100;   /* 預設 115（延伸出畫布），調小讓下緣往上收 */
+
+  /* 質感 */
+  --shadow-blur:       3;              /* 上緣銳利設 0，柔化設 4~12 */
+  --shadow-bottom-fade: 80;            /* 下緣淡出範圍（%），0 = 不淡出 */
+  --shadow-left-fade: 40;   /* 左側斜邊往內 40px 漸隱，數字越大越柔 */
+  /* 深淺 */
+  --shadow-alpha: 0.4;   /* 0.0（完全透明）~ 1.0（完全不透明），預設約 0.22 */
+}
+
+
+/* ── transform-origin 全域修正（必填，不改） ── */
+* { transform-origin: 0 0; }
+
+
+/* ── 文字圖層位置 ── */
+.主標 { left: 51.34px; top: 284.59px; line-height: 1; white-space: nowrap; }
+.副標 { left: 50.61px; top: 342.44px; line-height: 1; white-space: nowrap; }
+
+/* ★ 問題 1 修正：日期固定在 PS 設計座標，不跟隨主標
+   left 來自 PS 變形面板，不再由 JS 動態計算 */
+.日期  { left: 54.8px;  top: 419px;    line-height: 1; white-space: nowrap; }
+
+
+/* ── 透明背景（必填，不改） ── */
+.LOGO範圍 { background-color: transparent !important; opacity: 1; }
+.商品範圍 { background-color: transparent !important; opacity: 1; }
+
+
+/* ── 廠商 LOGO 範圍 ──
+   ★ 問題 2 修正：
+     FB_POST.css 有 opacity: 0.51（PS 半透明佔位值），
+     必須在這裡明確覆寫為 1，否則注入的 LOGO 圖片也會繼承半透明效果 */
+.廠商LOGO範圍 {
+  position: absolute !important;
+  left:   509.13px !important;
+  top:    221.03px !important;
+  width:  141px !important;
+  height:  57px !important;
+  opacity: 1 !important;           /* ← 覆寫 PS 的 opacity: 0.51 */
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+
+/* ── 蝦導播 LOGO 範圍 ──
+   ★ 問題 2 修正：同樣需要覆寫 opacity: 0.51 */
+.蝦導播LOGO範圍 {
+  position: absolute !important;
+  left:    53.84px !important;
+  top:    226.75px !important;
+  width:  425.07px !important;
+  height:  44.22px !important;
+  opacity: 1 !important;           /* ← 覆寫 PS 的 opacity: 0.51 */
+  overflow: hidden;
+  background-color: transparent !important;
+}
+
+
+/* ── 蝦皮角標 LOGO 範圍 ──
+   FB_POST.css 有 background-color: rgb(208,1,27)（紅色 PS 佔位色），
+   覆寫為透明，並確保 opacity 不被繼承影響 */
+.蝦皮LOGO範圍 {
+  background-color: transparent !important;
+  opacity: 1 !important;
+}

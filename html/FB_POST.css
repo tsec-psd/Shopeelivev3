@@ -1,0 +1,101 @@
+.FB_POST {
+  position: absolute;
+  left: 921px;
+  top: 1747px;
+  width: 1200px;
+  height: 630px;
+  z-index: 52;
+}
+.分隔線 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 493px;
+  top: 233px;
+  width: 2px;
+  height: 34px;
+  z-index: 51;
+}
+.廠商LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 1;
+  position: absolute;
+  left: 509px;
+  top: 221px;
+  width: 141px;
+  height: 57px;
+  z-index: 50;
+}
+.蝦導播LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 1;
+  position: absolute;
+  left: 53px;
+  top: 226px;
+  width: 426px;
+  height: 45px;
+  z-index: 49;
+}
+.蝦皮LOGO範圍 {
+  background-color: rgb(208, 1, 27);
+  position: absolute;
+  left: 25px;
+  top: 491px;
+  width: 85px;
+  height: 115px;
+  z-index: 48;
+}
+.商品範圍 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 652px;
+  top: 7px;
+  width: 549px;
+  height: 623px;
+  z-index: 47;
+}
+.日期 {
+  font-size: 34.661px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(35, 85, 141);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 0.75366036836558,0,-8.41996120521903e-17,0.75698010254564,0,0);
+  -webkit-transform: matrix( 0.75366036836558,0,-8.41996120521903e-17,0.75698010254564,0,0);
+  -ms-transform: matrix( 0.75366036836558,0,-8.41996120521903e-17,0.75698010254564,0,0);
+  transform: matrix( 0.75366036836558,0,-8.41996120521903e-17,0.75698010254564,0,0);
+  position: absolute;
+  left: 34.395px;
+  top: 411.532px;
+  z-index: 46;
+}
+.主標 {
+  font-size: 48px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(34, 85, 142);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  -webkit-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  -ms-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  position: absolute;
+  left: 64.458px;
+  top: 281.765px;
+  z-index: 45;
+}
+.副標 {
+  font-size: 83.664px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(32, 132, 244);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 0.83516954877943,-4.14732914832178e-16,0,0.83473969180233,0,0);
+  -webkit-transform: matrix( 0.83516954877943,-4.14732914832178e-16,0,0.83473969180233,0,0);
+  -ms-transform: matrix( 0.83516954877943,-4.14732914832178e-16,0,0.83473969180233,0,0);
+  transform: matrix( 0.83516954877943,-4.14732914832178e-16,0,0.83473969180233,0,0);
+  position: absolute;
+  left: 5.501px;
+  top: 327.009px;
+  z-index: 44;
+}

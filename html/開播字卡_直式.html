@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>開播字卡_直式</title>
+<style>
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 400;
+  src: url("../fonts/ShopeeNotoSans(content)-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "ShopeeNotoSans (content)";
+  font-weight: 700;
+  src: url("../fonts/ShopeeNotoSans(content)-Bold.ttf") format("truetype");
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  background: #1a1a1a;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#stage { position: relative; }
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 1080px; height: 1920px;
+  overflow: hidden;
+  transform-origin: top left;
+  background: #fce4ec;
+}
+#底圖 {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1; pointer-events: none; display: none;
+}
+#css-err {
+  display: none; position: fixed;
+  top: 14px; left: 50%; transform: translateX(-50%);
+  background: #7f1d1d; color: #fca5a5;
+  font-size: 13px; font-family: monospace;
+  padding: 7px 16px; border-radius: 6px; z-index: 9999;
+}
+</style>
+</head>
+<body data-fw="1080" data-fh="1920">
+<div id="css-err"></div>
+<div id="stage">
+  <div id="canvas">
+    <img id="底圖" src="" alt="">
+
+    <!-- ══ LOGO 區域（flex 置中模式）══
+         config.css 的 .LOGO範圍 設定 display:flex + justify-content:center，
+         三個子元素（蝦導播、分隔線、廠商LOGO）水平置中排列
+    -->
+    <div class="LOGO範圍" style="pointer-events:none;">
+
+      <div class="蝦導播LOGO範圍" style="pointer-events:none;">
+        <img class="蝦導播官方LOGO"
+             src="../img/蝦導播logo_直式_橘.png"
+             alt="蝦導播"
+             onerror="this.style.display='none'"
+             style="width:100%; height:100%;
+                    object-fit:contain; object-position:left center;
+                    display:block; pointer-events:none;">
+      </div>
+
+      <div class="分隔線" style="pointer-events:none;"></div>
+      <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
+
+    </div>
+
+    <!-- 其他圖層（商品範圍、bar範圍、主標、日期、副標、購物專家）
+         由 layout-runtime.js 讀取 --layers 動態建立
+         ★ 此版位無 CTA，無蝦皮角標
+    -->
+
+  </div>
+</div>
+<script src="../js/layout-runtime.js"></script>
+</body>
+</html>

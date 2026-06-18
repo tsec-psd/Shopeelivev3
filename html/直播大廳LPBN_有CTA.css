@@ -1,0 +1,122 @@
+/*
+ * 直播大廳LPBN_有CTA.css  ← PS 維護的版型 CSS
+ * 修正：
+ *   1. .購物專家___緯倫 → .購物專家（讓 layout-runtime.js 可以注入文字）
+ *   2. transform-origin 移除（統一由 config.css 的 * { transform-origin: 0 0 } 處理）
+ */
+
+.直播大廳LPBN_有CTA {
+  position: absolute;
+  left: 0px; top: 0px;
+  width: 1125px; height: 360px;
+  z-index: 18;
+}
+.CTA {
+  background-color: rgb(238, 77, 45);
+  position: absolute;
+  left: 54px; top: 253px;
+  width: 218px; height: 69px;
+  z-index: 17;
+}
+.直播大廳 {
+  position: absolute;
+  left: 0px; top: 0px;
+  width: 1125px; height: 360px;
+  z-index: 16;
+}
+.LOGO範圍 {
+  position: absolute;
+  left: 0px; top: 0px;
+  width: 1125px; height: 360px;
+  z-index: 15;
+}
+.廠商LOGO範圍 {
+  position: absolute;
+  left: 504px; top: 53px;
+  width: 125px; height: 57px;
+  z-index: 14;
+}
+.蝦導播LOGO範圍 {
+  position: absolute;
+  left: 47px; top: 58px;
+  width: 426px; height: 45px;
+  z-index: 13;
+}
+.分隔線 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 486px; top: 64px;
+  width: 2px; height: 34px;
+  z-index: 12;
+}
+.TEXT {
+  position: absolute;
+  left: 0px; top: 0px;
+  width: 1125px; height: 360px;
+  z-index: 10;
+}
+.日期 {
+  font-size: 34.661px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(35, 85, 141);
+  line-height: 1.2;
+  text-align: left;
+  transform: matrix(0.73333319092306, 0, -8.1928641563869e-17, 0.73656338765552, 0, 0);
+  -webkit-transform: matrix(0.73333319092306, 0, -8.1928641563869e-17, 0.73656338765552, 0, 0);
+  position: absolute;
+  left: 314.895px; top: 122.532px;
+  z-index: 9;
+}
+.主標 {
+  font-size: 48px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(34, 85, 142);
+  line-height: 1.2;
+  text-align: left;
+  transform: matrix(0.83697307155191, 0, 0, 0.84065978274179, 0, 0);
+  -webkit-transform: matrix(0.83697307155191, 0, 0, 0.84065978274179, 0, 0);
+  position: absolute;
+  left: 19.958px; top: 107.265px;
+  z-index: 8;
+}
+.副標 {
+  font-size: 83.664px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(32, 132, 244);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  transform: matrix(0.83977453289524, 0, 0, 0.83934230575923, 0, 0);
+  -webkit-transform: matrix(0.83977453289524, 0, 0, 0.83934230575923, 0, 0);
+  position: absolute;
+  left: 0.501px; top: 149.509px;
+  z-index: 7;
+}
+/* ★ 修正：class 從 .購物專家___緯倫 改為 .購物專家 */
+.購物專家 {
+  font-size: 39.73px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(255, 255, 255);
+  line-height: 1.2;
+  text-align: right;
+  transform: matrix(0.66512347437629, 0, 0, 0.66085968878054, 0, 0);
+  -webkit-transform: matrix(0.66512347437629, 0, 0, 0.66085968878054, 0, 0);
+  position: absolute;
+  left: 893.316px; top: 311.254px;
+  z-index: 6;
+}
+.bar範圍 {
+  background-color: rgb(35, 85, 141);
+  opacity: 0.8;
+  position: absolute;
+  left: 538px; top: 315px;
+  width: 590px; height: 47px;
+  z-index: 5;
+}
+.商品範圍 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 620px; top: 23px;
+  width: 467px; height: 337px;
+  z-index: 3;
+}

@@ -1,0 +1,129 @@
+.IG {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  width: 900px;
+  height: 1600px;
+  z-index: 15;
+}
+.廠商LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 1;
+  position: absolute;
+  left: 504px;
+  top: 268px;
+  width: 197px;
+  height: 94px;
+  z-index: 14;
+}
+.分隔線 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 484px;
+  top: 293px;
+  width: 3px;
+  height: 44px;
+  z-index: 13;
+}
+.蝦導播LOGO範圍 {
+  background-color: rgb(238, 77, 45);
+  opacity: 1;
+  position: absolute;
+  left: 202px;
+  top: 268px;
+  width: 271px;
+  height: 94px;
+  z-index: 12;
+}
+.購物專家 {
+  font-size: 39.73px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(255, 255, 255);
+  line-height: 1.2;
+  text-align: center;
+  -moz-transform: matrix( 0.9654775285614,0,0,0.95928831807961,0,0);
+  -webkit-transform: matrix( 0.9654775285614,0,0,0.95928831807961,0,0);
+  -ms-transform: matrix( 0.9654775285614,0,0,0.95928831807961,0,0);
+  transform: matrix( 0.9654775285614,0,0,0.95928831807961,0,0);
+  position: absolute;
+  left: 316.816px;
+  top: 591.754px;
+  z-index: 11;
+}
+.bar範圍 {
+  background-color: rgb(35, 85, 141);
+  opacity: 0.902;
+  position: absolute;
+  left: 0px;
+  top: 585px;
+  width: 900px;
+  height: 65px;
+  z-index: 10;
+}
+.日期 {
+  font-size: 34.661px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(35, 85, 141);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 0.95241764712217,0,-1.06404953431819e-16,0.95661287026188,0,0);
+  -webkit-transform: matrix( 0.95241764712217,0,-1.06404953431819e-16,0.95661287026188,0,0);
+  -ms-transform: matrix( 0.95241764712217,0,-1.06404953431819e-16,0.95661287026188,0,0);
+  transform: matrix( 0.95241764712217,0,-1.06404953431819e-16,0.95661287026188,0,0);
+  position: absolute;
+  left: 549.895px;
+  top: 397.532px;
+  z-index: 9;
+}
+.主標 {
+  font-size: 48px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(34, 85, 142);
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  -webkit-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  -ms-transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  transform: matrix( 1.07956629362855,0,0,1.0843215829804,0,0);
+  position: absolute;
+  left: 199.458px;
+  top: 379.765px;
+  z-index: 8;
+}
+.副標 {
+  font-size: 83.664px;
+  font-family: "ShopeeNotoSans (content)";
+  color: rgb(32, 132, 244);
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: left;
+  -moz-transform: matrix( 1.20224475425866,-5.97017063186857e-16,0,1.20162596577845,0,0);
+  -webkit-transform: matrix( 1.20224475425866,-5.97017063186857e-16,0,1.20162596577845,0,0);
+  -ms-transform: matrix( 1.20224475425866,-5.97017063186857e-16,0,1.20162596577845,0,0);
+  transform: matrix( 1.20224475425866,-5.97017063186857e-16,0,1.20162596577845,0,0);
+  position: absolute;
+  left: 175.001px;
+  top: 450.009px;
+  z-index: 7;
+}
+.商品範圍 {
+  background-color: rgb(255, 255, 255);
+  position: absolute;
+  left: 34px;
+  top: 684px;
+  width: 840px;
+  height: 917px;
+  z-index: 6;
+}
+
+.蝦皮LOGO範圍 {
+  background-color: rgb(208, 1, 27);
+  position: absolute;
+  left: 752px;
+  top: 127px;
+  width: 149px;
+  height: 139px;
+  z-index: 3;
+}
+
+
