@@ -392,6 +392,9 @@
       pzone.appendChild(box);
       setupProdDrag(box, pzone);
       layoutProducts(pzone);
+      /* 商品盒建立完成後延遲 30ms，等待同批次所有 bn-product-add 落地後
+         再執行 _smartAutoLayout，避免中途觸發導致位置計算不完整 */
+      setTimeout(_smartAutoLayout, 30);
     }
 
     /* 商品就地更新：更新 src/ratio，不重置位置（陰影重算/切換使用）*/
@@ -415,7 +418,7 @@
       if(el) el.remove();
       var remaining = pzone.querySelectorAll('.bn-prod-box');
       if(!remaining.length) { pzone.style.background=''; pzone.style.opacity=''; }
-      else layoutProducts(pzone);
+      else setTimeout(_smartAutoLayout, 30);
     }
 
     /* z-index 順序更新：order[0] = 最上層（z 最高） */
@@ -427,6 +430,14 @@
         var box = pzone.querySelector('.bn-prod-box[data-id="'+id+'"]');
         if(box) box.style.zIndex = String(total - i + 10);
       });
+    }
+
+    /* 構圖預設：套用 preset 的人物 + 商品位置（百分比相對於商品範圍）*/
+    if (e.data.type === 'bn-compose') {
+      /* 記住最後一次套用的構圖，供 _smartAutoLayout 在商品數量變動時重用 */
+      window.__bnLastPreset = e.data.preset;
+      _applyCompose(e.data.preset);
+      return;
     }
 
     /* 蝦導播 LOGO 切換：橘色 ↔ 白色，同步更新分隔線顏色
@@ -454,78 +465,127 @@
     }
 
     /* 人物圖：由 config.css 定義初始 slot，支援拖移/縮放，永遠在最上層 */
-    if (e.data.type === 'bn-person') {
+    // 更改為接收複數人物陣列訊號
+    if (e.data.type === 'bn-persons') {
       var pzone = getProductZone();
       if (!pzone) return;
 
-      var oldPerson = pzone.querySelector('.bn-person-box');
-      if (oldPerson) oldPerson.remove();
+      /* 1. 清除舊的「所有」人物外殼（避免殘留） */
+      var oldPersons = pzone.querySelectorAll('.bn-person-box');
+      oldPersons.forEach(function(el) { el.remove(); });
 
-      if (!e.data.src) return;
+      var persons = e.data.persons || [];
+      if (persons.length === 0) return;
 
-      /* 讀取 config.css slot（未定義 = fallback B 不顯示）*/
+      /* 讀取畫布與外框的當前樣式 */
       var rootCs = window.getComputedStyle(document.documentElement);
-      var personX = (rootCs.getPropertyValue('--bn-person-x') || '').trim();
-      if (!personX) return;
-
-      var personBottom = (rootCs.getPropertyValue('--bn-person-bottom') || '0%').trim();
-      var personH      = (rootCs.getPropertyValue('--bn-person-h')      || '88%').trim();
-
       var pcs = window.getComputedStyle(pzone);
       var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
       var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
 
-      /* 初始位置：直接算出 left/top px，與 setupProdDrag 相容
-         （setupProdDrag 用 top/left 計算，不可使用 bottom 或 transform） */
-      var ratio        = parseFloat(e.data.ratio) || 1;
-      var hPx          = parseFloat(personH)      / 100 * zh;
-      var wPx          = Math.round(hPx * ratio);
-      /* --bn-person-x 為左邊緣（非中心點），設 0% = 貼齊商品範圍最左邊 */
-      var leftPx       = Math.round(parseFloat(personX) / 100 * zw);
-      var bottomOffset = parseFloat(personBottom)  / 100 * zh;
-      var topPx        = Math.max(0, Math.round(zh - bottomOffset - hPx));
+      /* 2. 使用迴圈依序渲染每一張人物圖 */
+      persons.forEach(function(personData, index) {
+        if (!personData.src) return;
 
-      var box = document.createElement('div');
-      box.className     = 'bn-person-box';
-      box.dataset.ratio = String(ratio);          /* setupProdDrag 等比縮放用 */
-      box.style.cssText = [
-        'position:absolute;',
-        'left:'+leftPx+'px; top:'+topPx+'px;',
-        'width:'+wPx+'px; height:'+Math.round(hPx)+'px;',
-        'cursor:move; box-sizing:border-box;',
-        'outline:2px solid transparent;',
-        'overflow:visible;',
-        'z-index:20;',  /* 永遠在所有商品（最高 z:15）之上 */
-        'pointer-events:auto;',
-      ].join('');
+        // 智慧型變數判定：優先尋找第二個人的獨立控制變數（如 --bn-person2-x），若無則帶入基本預設
+        var suffix = index === 0 ? '' : '2';
+        var personX = (rootCs.getPropertyValue('--bn-person' + suffix + '-x') || rootCs.getPropertyValue('--bn-person-x') || '').trim();
+        
+        // 防呆：如果連第一個人物的基本 X 座標都沒定義，代表此版位不支援人物，直接跳過
+        if (!personX && index === 0) return;
 
-      var img = document.createElement('img');
-      img.src = e.data.src;
-      img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;';
-      box.appendChild(img);
+        // 防疊加機制：如果上傳了第二個人，但該版位的 config.css 還沒設定 --bn-person2-x，
+        // 我們自動幫第二個人往右偏移 15%，避免兩個人完美重疊導致滑點不到下面的圖
+        if (index === 1 && !rootCs.getPropertyValue('--bn-person2-x')) {
+          personX = String(parseFloat(personX || '0') + 15) + '%';
+        }
 
-      /* Corner handles：橘色區分人物與商品（商品為藍色）*/
-      ['nw','ne','sw','se'].forEach(function(c){
-        var h = document.createElement('div');
-        h.dataset.corner = c;
-        h.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;'+
-          'background:#ee4d2d;border:2px solid #fff;z-index:21;display:none;'+
-          (c==='nw'?'left:-7px;top:-7px;cursor:nwse-resize;':'')+
-          (c==='ne'?'right:-7px;top:-7px;cursor:nesw-resize;':'')+
-          (c==='sw'?'left:-7px;bottom:-7px;cursor:nesw-resize;':'')+
-          (c==='se'?'right:-7px;bottom:-7px;cursor:nwse-resize;':'');
-        box.appendChild(h);
+        var personBottom = (rootCs.getPropertyValue('--bn-person' + suffix + '-bottom') || rootCs.getPropertyValue('--bn-person-bottom') || '0%').trim();
+        var personH      = (rootCs.getPropertyValue('--bn-person' + suffix + '-h')      || rootCs.getPropertyValue('--bn-person-h')      || '88%').trim();
+
+        /* 延續您原有的精密 px 比例演算 */
+        var ratio        = parseFloat(personData.ratio) || 1;
+        var hPx          = parseFloat(personH)       / 100 * zh;
+        var wPx          = Math.round(hPx * ratio);
+        var leftPx       = Math.round(parseFloat(personX) / 100 * zw);
+        var bottomOffset = parseFloat(personBottom)  / 100 * zh;
+        var topPx        = Math.max(0, Math.round(zh - bottomOffset - hPx));
+
+        var box = document.createElement('div');
+        box.className     = 'bn-person-box bn-person-idx-' + index; // 加上索引 class 方便未來的 CSS 擴充
+        box.dataset.ratio = String(ratio);          /* setupProdDrag 等比縮放用 */
+        box.style.cssText = [
+          'position:absolute;',
+          'left:'+leftPx+'px; top:'+topPx+'px;',
+          'width:'+wPx+'px; height:'+Math.round(hPx)+'px;',
+          'cursor:move; box-sizing:border-box;',
+          'outline:2px solid transparent;',
+          'overflow:visible;',
+          'z-index:' + (20 + index) + ';',  /* 讓第二個人物微幅疊在第一個之上 (z-index: 20 與 21) */
+          'pointer-events:auto;',
+        ].join('');
+
+        var img = document.createElement('img');
+        img.src = personData.src;
+        img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;';
+        box.appendChild(img);
+
+        /* Corner handles：保持您的橘色控制點，並根據圖層微調 z-index */
+        ['nw','ne','sw','se'].forEach(function(c){
+          var h = document.createElement('div');
+          h.dataset.corner = c;
+          h.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;'+
+            'background:#ee4d2d;border:2px solid #fff;z-index:' + (22 + index) + ';display:none;'+
+            (c==='nw'?'left:-7px;top:-7px;cursor:nwse-resize;':'')+
+            (c==='ne'?'right:-7px;top:-7px;cursor:nesw-resize;':'')+
+            (c==='sw'?'left:-7px;bottom:-7px;cursor:nesw-resize;':'')+
+            (c==='se'?'right:-7px;bottom:-7px;cursor:nwse-resize;':'');
+          box.appendChild(h);
+        });
+
+        pzone.appendChild(box);
+        setupProdDrag(box, pzone);  /* 讓新生成的每一張人物圖，都具備獨立的拖移/縮放/滾輪能力 */
       });
 
-      /* 確保 zone 允許人物向下溢出（畫布 overflow:hidden 自然裁切下半身）*/
+      /* ==========================================
+      商品數量同步控制（與人物共用邏輯）
+       ========================================== */
+
+       var productEls = Array.from(
+       document.querySelectorAll('.bn-product')
+       );
+
+      /* 防呆：沒有商品直接跳出 */
+       if (productEls.length) {
+
+       var visibleProdCount =
+        Array.isArray(preset.prods)
+       ? preset.prods.length
+       : 0;
+
+       productEls.forEach(function(el, idx){
+
+      /* 超出構圖需求的商品直接隱藏 */
+        if (idx >= visibleProdCount) {
+
+        el.style.display = 'none';
+        el.style.pointerEvents = 'none';
+
+       } else {
+
+        el.style.display = '';
+        el.style.pointerEvents = '';
+       }
+
+  });
+}
+      /* 確保 zone 屬性正確 */
       pzone.style.overflow = 'visible';
       pzone.style.position = 'relative';
-      pzone.appendChild(box);
-      setupProdDrag(box, pzone);  /* 複用現有拖移/縮放/滾輪邏輯 */
       return;
     }
 
-    /* 底圖核對：疊加半透明底圖 */
+    /* 底圖核對：疊加半透明底圖（完全保留您原有的邏輯） */
     if (e.data.type === 'bn-bg-overlay') {
       var overlay = document.getElementById('_bn_bg_overlay');
       if(!overlay){
@@ -552,6 +612,7 @@
       return;
     }
 
+    /* 畫布截圖（完全保留您原有的邏輯） */
     if (e.data.type === 'bn-capture') {
       captureCanvas(function(dataUrl){
         window.parent.postMessage({type:'bn-snapshot',msgId:e.data.msgId,dataUrl:dataUrl},'*');
@@ -690,6 +751,7 @@
             ctx.fillRect(0, 0, W, H);
             ctx.globalCompositeOperation = 'source-over';
           }
+
           /* ── 第三階段：左側斜邊羽化（destination-in 沿邊垂直漸層）──
              --shadow-left-fade: 0  → 不羽化（預設，邊緣銳利）
              --shadow-left-fade: 40 → 斜邊往內 40px 範圍內漸隱
@@ -704,18 +766,18 @@
             /* 斜邊兩端座標 */
             var ex1 = W * sLeftX  / 100,  ey1 = H * sTopY / 100;
             var ex2 = W * sSlantX / 100,  ey2 = bottomPx;
- 
+
             /* 邊方向向量 */
             var edgeDx = ex2 - ex1,  edgeDy = ey2 - ey1;
             var edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy) || 1;
- 
+
             /* 法向量（旋轉 90° CW → 指向多邊形內側，即右方）*/
             var perpX = edgeDy / edgeLen;
             var perpY = -edgeDx / edgeLen;
- 
+
             if (typeof ctx.filter !== 'undefined') ctx.filter = 'none';
             ctx.globalCompositeOperation = 'destination-in';
- 
+
             /* 漸層：從斜邊（透明）往內 sLeftFade px（不透明）*/
             var eGrad = ctx.createLinearGradient(
               ex1,                       ey1,
@@ -727,7 +789,7 @@
             ctx.fillRect(0, 0, W, H);
             ctx.globalCompositeOperation = 'source-over';
           }
-          
+
           /* 插入到背景色圖層之後 */
           var bgEl = canvas.querySelector('.背景色');
           if (bgEl && bgEl.nextSibling) {
@@ -765,9 +827,28 @@
       var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
       var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
 
-      var sortedBoxes = allBoxes.slice().sort(function(a,b){
-        return (parseInt(a.dataset.position)||0) - (parseInt(b.dataset.position)||0);
-      });
+      var sortedBoxes = allBoxes
+  .filter(function(box){
+
+    /* 已被 compose 隱藏的商品不要再參與排版 */
+
+    if (
+      box.style.display === 'none' ||
+      box.style.visibility === 'hidden'
+    ) {
+      return false;
+    }
+
+    return true;
+  })
+  .sort(function(a,b){
+
+    return (
+      (parseInt(a.dataset.position,10) || 0) -
+      (parseInt(b.dataset.position,10) || 0)
+    );
+
+  });
 
       sortedBoxes.forEach(function(box, i){
         var sx = (rootCs.getPropertyValue('--bn-prod-'+i+'-x') || '').trim();
@@ -781,6 +862,12 @@
         var cy   = parseFloat(sy) / 100 * zh;
         var h    = parseFloat(sh) / 100 * zh * (parseFloat(box.dataset.sizeScale)||1);
         var w    = h * (parseFloat(box.dataset.ratio)||1);
+        /* ★ 防爆寬度上限：ratio 過大（斜拍商品、橫式包裝）時以 zone 寬 92% 為限，
+           反推高度保持原比例，避免商品炸出商品範圍邊界 */
+        if (w > zw * 0.92) {
+          w = Math.round(zw * 0.92);
+          h = Math.round(w / (parseFloat(box.dataset.ratio)||1));
+        }
         /* clamp：確保商品至少 80% 在 zone 範圍內 */
         cx = Math.max(w*0.5, Math.min(zw - w*0.5, cx));
         cy = Math.max(h*0.5, Math.min(zh - h*0.5, cy));
@@ -794,7 +881,9 @@
           'cursor:move;box-sizing:border-box;',
           'outline:2px solid transparent;',
           'overflow:visible;',
-          'z-index:'+(15-i)+';',
+          /* ★ 主品（i=0）在後，配品依序往前。公式 10+i：
+             slot 0 = z:10（最底層），slot 1 = z:11，slot 2 = z:12 */
+          'z-index:'+(10+i)+';',
         ].join('');
       });
       return; /* Slot 模式結束，不執行舊版邏輯 */
@@ -1271,6 +1360,153 @@
       }
     });
   }
+  /* ══════════════════════════════════════════════════════════
+     構圖預設套用
+     preset.person  : { x, bottom, h }  — 相對商品範圍的 %
+     preset.prods[] : { x, y, h, z }    — 中心點 X/Y %、高度 %、z-index
+     ★ 同時更新 CSS 變數（--bn-prod-N-x/y/h）→ 之後 layoutProducts 重算不會跑掉
+     ★ 保留 sizeScale（使用者縮放偏好不被清掉）
+  ══════════════════════════════════════════════════════════ */
+  /**
+ * 接收並套用跨版位全域構圖預設 (支援 1人2品 / 2人 / 2人2品 / 1人1品 矩陣)
+ * @param {Object} rawPreset 來自父控制介面的原始預設配置資料
+ */
+/**
+ * 接收並套用全域構圖預設 (完全根除資產殘留與多餘 Slot 穿幫問題)
+ * @param {Object} rawPreset 來自父控制介面的原始預設配置資料
+ */
+function _applyCompose(rawPreset) {
+  if (!rawPreset) return;
+
+  var pzone = getProductZone();
+  if (!pzone) return;
+
+  // 1. 隔離性深拷貝防止多版位傳址污染
+  var preset = JSON.parse(JSON.stringify(rawPreset));
+
+  // 2. 探測尺寸與長寬比補正
+  var pcs = window.getComputedStyle(pzone);
+  var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
+  var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
+  var isVertical  = (zw / zh) <= 1.0; 
+
+  // 3. 直式高窄版位避讓演算法 (維持對角線逃逸優化)
+  if (isVertical) {
+    if (preset.persons && preset.persons.length > 0) {
+      if (preset.persons.length === 1) {
+        preset.persons[0].x = -8;
+        preset.persons[0].h = Math.min(preset.persons[0].h, 82);
+        preset.prods.forEach(function(p) { p.x = Math.min(95, p.x + 6); p.h = Math.round(p.h * 0.85); });
+      } else if (preset.persons.length >= 2) {
+        preset.persons[0].x = -15; preset.persons[0].h = 75;
+        preset.persons[1].x = 12;  preset.persons[1].h = 75;
+        if (preset.prods && preset.prods.length > 0) {
+          preset.prods.forEach(function(p) { p.x = Math.min(92, p.x + 5); p.y = Math.max(15, p.y - 12); p.h = Math.round(p.h * 0.75); });
+        }
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // 4. 全全域【人物圖層】動態剪裁與優先權配對
+  // ════════════════════════════════════════════════════════════════════
+  var personBoxes = pzone.querySelectorAll('.bn-person-box');
+  var targetPersonCount = (preset.persons && preset.persons.length) || 0;
+
+  personBoxes.forEach(function(personBox, idx) {
+    // 優先讀取 DOM 上的 data-position 屬性，若無則以元素索引遞補
+    var currentSlot = parseInt(personBox.getAttribute('data-position') || idx, 10);
+
+    // 🌟 核心防禦：若該 Slot 超出當前構圖所需數量，強制隱藏剪裁，徹底解決殘留問題
+    if (currentSlot >= targetPersonCount || !preset.persons || !preset.persons[currentSlot]) {
+      personBox.style.display = 'none';
+      return; 
+    }
+
+    // 符合構圖數量，執行排版定位 (永遠以 Slot 0 第一張圖為最優先)
+    var pConfig = preset.persons[currentSlot];
+    personBox.style.display = 'block';
+
+    var pRatio   = parseFloat(personBox.dataset.ratio) || 1;
+    var pH       = (pConfig.h / 100) * zh;
+    var pW       = pH * pRatio;
+    var pLeft    = (pConfig.x / 100) * zw;
+    var pBottom  = (pConfig.bottom / 100) * zh;
+    var pTop     = Math.max(0, Math.round(zh - pBottom - pH));
+
+    personBox.style.width  = Math.round(pW) + 'px';
+    personBox.style.height = Math.round(pH) + 'px';
+    personBox.style.left   = Math.round(pLeft) + 'px';
+    personBox.style.top    = Math.round(pTop) + 'px';
+  });
+
+
+  // ════════════════════════════════════════════════════════════════════
+  // 5. 全全域【商品圖層】動態剪裁與殘留清空
+  // ════════════════════════════════════════════════════════════════════
+  var prodBoxes = pzone.querySelectorAll('.bn-prod-box');
+  var targetProdCount = (preset.prods && preset.prods.length) || 0;
+
+  prodBoxes.forEach(function(box, idx) {
+    var currentSlot = parseInt(box.getAttribute('data-position') || idx, 10);
+
+    // 🌟 核心防禦：上傳了2品但切回1品構圖時，大於等於 1 的 Slot (即第二件商品) 直接強制關閉！
+    if (currentSlot >= targetProdCount || !preset.prods || !preset.prods[currentSlot]) {
+      box.style.display = 'none';
+     box.dataset.composeHidden = '1';
+      return; 
+    }
+
+    // 符合數量，執行精確黃金點定位 (第一張上傳的圖片 Slot 0 享有絕對第一優先權)
+    var prodConfig = preset.prods[currentSlot];
+    box.style.display = 'block'; // 確保恢復顯示
+
+    try {
+      var pRatio = parseFloat(box.dataset.ratio) || 1;
+      var boxH   = (prodConfig.h / 100) * zh;
+      var boxW   = boxH * pRatio;
+      /* ★ 防爆寬度上限：同 slot 模式，寬度不得超出 zone 寬的 92%，
+         反推高度以維持原比例，防止斜拍商品爆版 */
+      if (boxW > zw * 0.92) { boxW = Math.round(zw * 0.92); boxH = Math.round(boxW / pRatio); }
+
+      var offsetX = 0;
+
+if (targetProdCount === 2) {
+
+  offsetX =
+    currentSlot === 0
+      ? -zw * 0.05
+      :  zw * 0.05;
+}
+
+var boxLeft =
+  (prodConfig.x / 100) * zw
+  - (boxW / 2)
+  + offsetX;
+  
+      var boxTop  = (prodConfig.y / 100) * zh - (boxH / 2);
+
+      box.style.width  = Math.round(boxW) + 'px';
+      box.style.height = Math.round(boxH) + 'px';
+      box.style.left   = Math.round(boxLeft) + 'px';
+      box.style.top    = Math.round(boxTop) + 'px';
+      box.style.zIndex = String(prodConfig.z || (10 + currentSlot));
+
+      // 烘入 Inline CSS 全域環境變數鎖定 Runtime 狀態
+      document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-x', prodConfig.x + '%');
+      document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-y', prodConfig.y + '%');
+      document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-h', prodConfig.h + '%');
+
+    } catch (err) {
+      console.error('[LayoutRuntime] 商品多向動態剪裁排版重繪失敗, Slot: ' + currentSlot, err);
+    }
+  });
+
+  // 6. 強制調用一次陰影與邊界重繪機制，維持跨版位視覺一致性
+  if (typeof layoutProducts === 'function') {
+    layoutProducts(pzone);
+  }
+}
   /* 日期跟隨主標：
      "1"      → 日期貼著主標右側（原有行為，向下相容）
      "center" → 主標＋日期整串水平置中，兩者同步重算 left
@@ -1328,18 +1564,82 @@
   function doCapture(cb){
     var cv=document.getElementById('canvas');
     if(!cv){if(cb)cb(null);return;}
+
+    /* 讀取 KB 上限（config.css 的 --max-kb，單位 KB，0 = 無限制）*/
+    var maxKb = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--max-kb')||'') || 0;
+    var TARGET_BYTES = maxKb > 0 ? maxKb * 1024 : 0;
+
     html2canvas(cv,{scale:1,useCORS:true,allowTaint:true,backgroundColor:null,
       width:parseFloat(cv.style.width)||cv.offsetWidth,
       height:parseFloat(cv.style.height)||cv.offsetHeight,logging:false,
-      /* 截圖排除條件：
-         ① data-no-capture="true" → 純預覽元素（如直播遮罩）
-         ② data-corner 有值       → 商品/人物編輯框的控制點（圓形 handle） */
       ignoreElements: function(el){
         if (!el.dataset) return false;
         return el.dataset.noCapture === 'true' || !!el.dataset.corner;
       }})
-    .then(function(c){if(cb)cb(c.toDataURL('image/png'));})
+    .then(function(c){
+      /* Base64 大小估算（省去 header 後 × 0.75）*/
+      function getBytes(url){
+        var hdr = 'data:image/jpeg;base64,';
+        return Math.ceil((url.length - hdr.length) * 0.75);
+      }
+
+      if (TARGET_BYTES <= 0) {
+        /* 無限制：直接輸出高品質 JPEG */
+        if(cb) cb(c.toDataURL('image/jpeg', 0.95));
+        return;
+      }
+
+      /* 先試高品質 0.95 */
+      var hiUrl = c.toDataURL('image/jpeg', 0.95);
+      if (getBytes(hiUrl) <= TARGET_BYTES) { if(cb) cb(hiUrl); return; }
+
+      /* 先試最低 0.50（若還超過，只能給最小值）*/
+      var loUrl = c.toDataURL('image/jpeg', 0.50);
+      if (getBytes(loUrl) > TARGET_BYTES) { if(cb) cb(loUrl); return; }
+
+      /* 二元搜尋：8 次迭代精度 ≈ 0.003，找最高品質且 ≤ TARGET_BYTES */
+      var lo = 0.50, hi = 0.95, bestUrl = loUrl;
+      for (var i = 0; i < 8; i++) {
+        var mid    = (lo + hi) / 2;
+        var midUrl = c.toDataURL('image/jpeg', mid);
+        if (getBytes(midUrl) <= TARGET_BYTES) { bestUrl = midUrl; lo = mid; }
+        else { hi = mid; }
+      }
+      if(cb) cb(bestUrl);
+    })
     .catch(function(){if(cb)cb(null);});
+  }
+
+  /**
+   * _smartAutoLayout — 統一自動排版入口
+   * ─────────────────────────────────────────────────────────────
+   * 每次商品數量變動（新增 / 移除）後呼叫：
+   *   1. 清除所有 inline slot CSS 變數（防止殘留值污染下一次計算）
+   *   2. 若曾套用過構圖預設（window.__bnLastPreset 存在），重新套用，
+   *      讓新增或移除後的商品也能遵照相同構圖定位。
+   *   3. 若從未套用過構圖，走 legacy 底部對齊排列兜底。
+   * ─────────────────────────────────────────────────────────────
+   */
+  function _smartAutoLayout() {
+    var pzone = getProductZone();
+    if (!pzone) return;
+
+    /* 清除 inline slot 變數，讓後續計算以乾淨狀態出發
+       （removeProperty 只清 inline style，不影響 config.css 裡定義的靜態預設值）*/
+    for (var i = 0; i < 3; i++) {
+      document.documentElement.style.removeProperty('--bn-prod-' + i + '-x');
+      document.documentElement.style.removeProperty('--bn-prod-' + i + '-y');
+      document.documentElement.style.removeProperty('--bn-prod-' + i + '-h');
+    }
+
+    if (window.__bnLastPreset) {
+      /* 重套上次構圖預設：商品數量改變後維持一致的視覺排版 */
+      _applyCompose(window.__bnLastPreset);
+    } else {
+      /* 尚未套用任何構圖 → legacy 模式底部對齊排列（已有 zone 寬高防爆保護）*/
+      layoutProducts(pzone);
+    }
   }
 
   function applyColor(cls,color){
@@ -1351,3 +1651,213 @@
 })();
 
 })();
+
+/**
+ * 根據人物數量與商品數量
+ * 自動套用最接近的構圖
+ */
+function autoApplyCompose() {
+
+  if (
+    !window.COMPOSE_PRESETS ||
+    !Array.isArray(window.COMPOSE_PRESETS)
+  ) {
+    return;
+  }
+
+  var personCount = document.querySelectorAll('.bn-person-box').length;
+  var prodCount   = document.querySelectorAll('.bn-prod-box').length;
+
+  personCount = Math.min(personCount, 2);
+  prodCount   = Math.min(prodCount, 3);
+
+  var targetPreset = null;
+
+  COMPOSE_PRESETS.forEach(function(preset){
+
+    var pCount =
+      (preset.persons && preset.persons.length) || 0;
+
+    var prodLen =
+      (preset.prods && preset.prods.length) || 0;
+
+    if (
+      pCount === personCount &&
+      prodLen === prodCount
+    ) {
+      targetPreset = preset;
+    }
+
+  });
+
+  if (targetPreset) {
+    _applyCompose(targetPreset);
+  }
+}
+/**
+ * 終極像素幾何限縮排版引擎
+ * 徹底解決因父容器 (.商品範圍) 撐滿全畫面導致的商品超巨大、重疊死結
+ */
+function autoArrangeProducts() {
+  var pzone = getProductZone();
+  if (!pzone) {
+    console.warn("[Layout Runtime] 找不到商品配置區域 (.商品範圍)");
+    return;
+  }
+
+  var canvas = document.getElementById('canvas');
+  if (!canvas) return;
+
+  // 1. 【精密量測】量測畫布真實解析度，判斷橫直式
+  var canvasW = canvas.offsetWidth || parseFloat(getComputedStyle(canvas).width) || 1125;
+  var canvasH = canvas.offsetHeight || parseFloat(getComputedStyle(canvas).height) || 360;
+  var isVertical = canvasH > canvasW;
+
+  var boxes = Array.from(pzone.querySelectorAll('.bn-prod-box'));
+  var count = boxes.length;
+  if (!count) return;
+
+  // 2. 【核心修正：黃金限縮像素計算】
+  // 絕不允許商品盒無限放大。橫式版位依高度的 65% 為上限，直式版位依寬度的 40% 為上限
+  var clampedSize = isVertical ? Math.floor(canvasW * 0.40) : Math.floor(canvasH * 0.65);
+  
+  console.log("[Geometry Engine] 執行極限縮框: " + clampedSize + "px, 避開父級全畫面拉伸。");
+
+  // 3. 【分流黃金座標矩陣】基於中心點百分比 (配合 translate(-50%,-50%) 使用)
+  var layouts = isVertical ? {
+    1: [{ x: 50, y: 45 }],
+    2: [{ x: 50, y: 32 }, { x: 50, y: 65 }],
+    3: [{ x: 50, y: 25 }, { x: 50, y: 50 }, { x: 50, y: 75 }]
+  } : {
+    1: [{ x: 50, y: 55 }],
+    2: [{ x: 32, y: 55 }, { x: 68, y: 55 }],
+    3: [{ x: 50, y: 38 }, { x: 26, y: 72 }, { x: 74, y: 72 }]
+  };
+
+  var positions = layouts[Math.min(count, 3)];
+
+  // 4. 【幾何強制直寫】壓制所有 PS 產生的絕對定位殘留與權重污染
+  boxes.forEach(function(box, idx) {
+    var pos = positions[idx] || { x: 50, y: 55 };
+
+    // 抹除拖曳殘留資料
+    box.removeAttribute('data-x');
+    box.removeAttribute('data-y');
+
+    // 強制直寫核心幾何樣式：給予不可撼動的實體像素寬高，打碎全畫面爆炸
+    box.style.setProperty('position', 'absolute', 'important');
+    box.style.setProperty('width', clampedSize + 'px', 'important');
+    box.style.setProperty('height', clampedSize + 'px', 'important');
+    
+    // 改用百分比定位中心點
+    box.style.setProperty('left', pos.x + '%', 'important');
+    box.style.setProperty('top', pos.y + '%', 'important');
+    
+    // 透過 transform 完美的將幾何中心對齊坐標點，並套用自訂縮放
+    var currentScale = box.dataset.scale || box.getAttribute('data-scale') || 1;
+    box.style.setProperty('transform', 'translate(-50%, -50%) scale(' + currentScale + ')', 'important');
+    box.style.setProperty('transform-origin', 'center center', 'important');
+
+    // 5. 【內層強制防禦】約束裡面的 img 標籤，使其百分之百鎖死在 clonedSize 方框之內
+    var img = box.querySelector('img');
+    if (img) {
+      img.style.setProperty('position', 'static', 'important'); // 拔除 PS 可能加上的 absolute 偏離
+      img.style.setProperty('width', '100%', 'important');
+      img.style.setProperty('height', '100%', 'important');
+      img.style.setProperty('object-fit', 'contain', 'important'); // 確保去背不變形
+      img.style.setProperty('margin', '0', 'important');
+    }
+  });
+
+  console.log("[Geometry Engine] 自動不重疊渲染完畢。");
+}
+
+/**
+ * 接收主控端同步廣播 (bn-compose) 時的防禦性處理
+ * @param {Object} targetPreset - 來自主控端的構圖資料模型
+ */
+function _applyCompose(targetPreset) {
+  if (!targetPreset) return;
+  
+  console.log("[Layout Runtime] 正在接收並套用構圖預設...", targetPreset);
+
+  // 如果預設構圖中含有精確的商品座標資料，優先套用
+  if (targetPreset.prods && targetPreset.prods.length) {
+    var pzone = getProductZone();
+    if (pzone) {
+      var boxes = Array.from(pzone.querySelectorAll('.bn-prod-box'));
+      targetPreset.prods.forEach(function(pData, idx) {
+        var box = boxes[idx];
+        if (box) {
+          // 清除髒狀態
+          box.style.left = '';
+          box.style.top = '';
+          
+          // 寫入預設構圖指定的百分比（支持跨不同規格 iframe 自適應）
+          document.documentElement.style.setProperty('--bn-prod-' + idx + '-x', pData.x + '%');
+          document.documentElement.style.setProperty('--bn-prod-' + idx + '-y', pData.y + '%');
+          box.style.setProperty('--local-x', pData.x + '%');
+          box.style.setProperty('--local-y', pData.y + '%');
+          
+          box.dataset.scale = pData.sizeScale || 1;
+          box.style.left = 'var(--local-x)';
+          box.style.top = 'var(--local-y)';
+          box.style.transform = 'translate(-50%, -50%) scale(' + (pData.sizeScale || 1) + ')';
+        }
+      });
+      return;
+    }
+  }
+
+  // 若構圖預設未指定精確商品座標（僅指定人物與大方向），則降級調用自動非重疊排版引擎
+  autoArrangeProducts();
+}
+
+// 確保在收到商品新增廣播 (bn-product-add) 或刪除廣播後，皆會被防抖觸發
+var _arrangeTimer = null;
+window.addEventListener('message', function(e) {
+  var data = e.data;
+  if (!data || typeof data !== 'object') return;
+
+  if (data.type === 'bn-product-add' || data.type === 'bn-product-remove' || data.type === 'bn-compose') {
+    clearTimeout(_arrangeTimer);
+    _arrangeTimer = setTimeout(function() {
+      if (data.type === 'bn-compose' && window.TARGET_PRESET_DATA) {
+        _applyCompose(window.TARGET_PRESET_DATA);
+      } else {
+        autoArrangeProducts();
+      }
+    }, 50); // 50ms 防抖，避免多品連續注入時造成重複計算死鎖
+  }
+});
+
+function autoScaleProducts() {
+
+  var pzone = getProductZone();
+
+  if (!pzone) return;
+
+  var boxes =
+    pzone.querySelectorAll('.bn-prod-box');
+
+  var count = boxes.length;
+
+  var scale = 1;
+
+  if (count === 2) {
+
+    scale = 0.85;
+
+  } else if (count >= 3) {
+
+    scale = 0.72;
+
+  }
+
+  boxes.forEach(function(box){
+
+    box.dataset.sizeScale = scale;
+
+  });
+
+}

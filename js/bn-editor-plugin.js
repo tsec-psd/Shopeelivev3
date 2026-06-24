@@ -91,14 +91,14 @@
     document.head.appendChild(style);
 
     /* ── 狀態 ── */
-    /* logo 支援最多3張 */
+    /* logo 支援最多2張 */
     window._bnLogos = window._bnLogos || [];   /* [{id,src}] */
     window._bnLogoDataUrl = window._bnLogoDataUrl || null;  /* 向下相容：第一張 */
-    var MAX_LOGOS = 3;
+    var MAX_LOGOS = 2;
     window._bnProducts    = window._bnProducts    || [];
-    var MAX_PROD = 3;
-    window._bnPerson      = window._bnPerson      || null;
-
+    var MAX_PROD = 2;
+    window._bnPersons     = window._bnPersons     || [];
+    var MAX_PERSONS       = 2;
     /* ── 工具 ── */
     function readFile(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(e){res(e.target.result);};r.onerror=rej;r.readAsDataURL(file);}); }
     function loadImg(src){ return new Promise(function(res,rej){var i=new Image();i.onload=function(){res(i);};i.onerror=rej;i.src=src;}); }
@@ -149,7 +149,7 @@
 
       var sec=document.createElement('div');
       sec.innerHTML=[
-        '<div class="s-section" style="margin-top:14px">廠商 Logo 上傳（最多3張）</div>',
+        '<div class="s-section" style="margin-top:14px">廠商 Logo 上傳（最多2張）</div>',
         '<div class="bn-section">',
         '  <div class="bn-drop" id="bn-logo-drop">',
         '    <input type="file" accept="image/*" multiple id="bn-logo-inp">',
@@ -221,10 +221,10 @@
 
       var sec=document.createElement('div');
       sec.innerHTML=[
-        '<div class="s-section" style="margin-top:14px">人物圖</div>',
+        '<div class="s-section" style="margin-top:14px">人物圖（最多2張）</div>',
         '<div class="bn-section">',
         '  <div class="bn-drop" id="bn-person-drop">',
-        '    <input type="file" accept="image/*" id="bn-person-inp">',
+        '    <input type="file" accept="image/*" multiple id="bn-person-inp">',
         '    ＋ 點擊或拖曳上傳人物圖',
         '  </div>',
         '  <div class="bn-prod-list" id="bn-person-list"></div>',
@@ -236,26 +236,37 @@
       var inp=document.getElementById('bn-person-inp');
 
       inp.addEventListener('change',function(){
-        if(!this.files[0])return;
-        doLoadPerson(this.files[0]);
+        var remaining = MAX_PERSONS - window._bnPersons.length;
+        if(remaining <= 0) return;
+        Array.from(this.files).slice(0, remaining).forEach(function(f){
+          doLoadPerson(f);
+        });
         inp.value='';
       });
       drop.addEventListener('dragover',function(e){e.preventDefault();this.classList.add('drag');});
       drop.addEventListener('dragleave',function(){this.classList.remove('drag');});
       drop.addEventListener('drop',function(e){
         e.preventDefault();this.classList.remove('drag');
-        var f=Array.from(e.dataTransfer.files).find(function(f){return f.type.startsWith('image/');});
-        if(f)doLoadPerson(f);
+        var remaining = MAX_PERSONS - window._bnPersons.length;
+        if(remaining <= 0) return;
+        Array.from(e.dataTransfer.files).filter(function(f){return f.type.startsWith('image/');})
+          .slice(0, remaining).forEach(function(f){ doLoadPerson(f); });
       });
     }
 
     function doLoadPerson(file){
+      if(window._bnPersons.length >= MAX_PERSONS) return;
       readFile(file).then(function(src){
         return loadImg(src).then(function(img){
-          /* trimAlpha：只裁透明邊距（人物可能穿白衣，autoTrim 白色排除會誤裁）*/
+          /* trimAlpha：只裁透明邊距 */
           var trimmed=trimAlpha(img);
-          window._bnPerson={src:trimmed.src,ratio:trimmed.ratio};
-          broadcast({type:'bn-person',src:trimmed.src,ratio:trimmed.ratio});
+          var personId = 'person_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+          window._bnPersons.push({
+            id: personId,
+            src: trimmed.src,
+            ratio: trimmed.ratio
+          });
+          broadcast({type:'bn-persons', persons:window._bnPersons});
           renderPersonList();
         });
       }).catch(function(){console.warn('[BN] 人物圖載入失敗');});
@@ -265,29 +276,30 @@
       var list=document.getElementById('bn-person-list');
       if(!list)return;
       list.innerHTML='';
-      if(!window._bnPerson)return;
 
-      var row=document.createElement('div');row.className='bn-prod-item';
+      window._bnPersons.forEach(function(p, i){
+        var row=document.createElement('div');row.className='bn-prod-item';
+        var img=document.createElement('img');img.src=p.src;
+        var label=document.createElement('span');label.textContent='人物圖 '+(i+1);
 
-      var img=document.createElement('img');img.src=window._bnPerson.src;
+        var editBtn=document.createElement('button');
+        editBtn.textContent='編輯';
+        editBtn.title='裁切・去背・擦除・影子';
+        editBtn.addEventListener('click',function(){ 
+          if(typeof openPersonEditor === 'function') openPersonEditor(p); 
+        });
 
-      var label=document.createElement('span');label.textContent='人物圖';
+        var rmBtn=document.createElement('button');
+        rmBtn.textContent='移除';rmBtn.className='rm';
+        rmBtn.addEventListener('click',function(){
+          window._bnPersons = window._bnPersons.filter(function(x){ return x.id !== p.id; });
+          broadcast({type:'bn-persons', persons:window._bnPersons});
+          renderPersonList();
+        });
 
-      var editBtn=document.createElement('button');
-      editBtn.textContent='編輯';
-      editBtn.title='裁切・去背・擦除・影子';
-      editBtn.addEventListener('click',function(){ openPersonEditor(); });
-
-      var rmBtn=document.createElement('button');
-      rmBtn.textContent='移除';rmBtn.className='rm';
-      rmBtn.addEventListener('click',function(){
-        window._bnPerson=null;
-        broadcast({type:'bn-person',src:null});
-        renderPersonList();
+        row.appendChild(img);row.appendChild(label);row.appendChild(editBtn);row.appendChild(rmBtn);
+        list.appendChild(row);
       });
-
-      row.appendChild(img);row.appendChild(label);row.appendChild(editBtn);row.appendChild(rmBtn);
-      list.appendChild(row);
     }
 
 
@@ -617,7 +629,7 @@
       scroll.querySelectorAll('.s-section').forEach(function(el){if(el.textContent.trim()==='排版選擇')target=el;});
       var sec=document.createElement('div');
       sec.innerHTML=[
-        '<div class="s-section" style="margin-top:8px">商品圖（最多3張）</div>',
+        '<div class="s-section" style="margin-top:8px">商品圖（最多2張）</div>',
         '<div class="bn-section">',
         '  <label id="bn-auto-shadow-row" style="display:flex;align-items:center;gap:8px;padding:2px 0 8px;cursor:pointer;">',
         '    <input type="checkbox" id="bn-auto-shadow" style="accent-color:#ee4d2d;width:14px;height:14px;cursor:pointer;flex-shrink:0;">',
@@ -650,7 +662,7 @@
         '      <div class="bn-modal-drop" id="bn-mdrop">',
         '        <div style="font-size:22px;margin-bottom:4px">🖼️</div>',
         '        <div style="font-size:13px;font-weight:700;color:#e0e0e0">拖曳或點擊選取圖片</div>',
-        '        <p style="margin:4px 0 0;font-size:11px">最多3張，可多選</p>',
+        '        <p style="margin:4px 0 0;font-size:11px">最多2張，可多選</p>',
         '        <input id="bn-mfinp" type="file" accept="image/*" multiple>',
         '      </div>',
         '      <div class="bn-preview-grid" id="bn-mpgrid"></div>',
@@ -720,8 +732,8 @@
       var el=document.getElementById('bn-mlimit');
       var n=staged.length;
       if(n>MAX_PROD){el.style.color='#f5a623';el.textContent='目前 '+n+' 張，請移除 '+(n-MAX_PROD)+' 張才可繼續';}
-      else if(n===MAX_PROD){el.style.color='#ee4d2d';el.textContent='✓ 已選 3 張，可繼續下一步';}
-      else if(n>0){el.style.color='#666666';el.textContent='已選 '+n+' 張（最多3張）';}
+      else if(n===MAX_PROD){el.style.color='#ee4d2d';el.textContent='✓ 已選 2 張，可繼續下一步';}
+      else if(n>0){el.style.color='#666666';el.textContent='已選 '+n+' 張（最多2張）';}
       else{el.textContent='';}
       var btn=document.getElementById('bn-mnext');
       if(btn&&currentStep===1){var ok=n>0&&n<=MAX_PROD;btn.disabled=!ok;}
@@ -853,12 +865,18 @@
         /* position: 0=主品(中), 1=左配, 2=右配 */
         var positionMap = [0, 1, 2];
         var pos = positionMap[i] !== undefined ? positionMap[i] : i;
-        window._bnProducts.push({id:id,src:src,ratio:item.ratio||1,name:item.name,sizeScale:sizeScale,position:pos,zOrder:i});
+        /* 預設 z 堆疊：主品（i=0）在後，配品（i=1+）依序往前。
+           zOrder 越小 = z-index 越高（越靠前），故主品得到最大的 zOrder 值 */
+        var zOrder = orderedItems.length - 1 - i;
+        window._bnProducts.push({id:id,src:src,ratio:item.ratio||1,name:item.name,sizeScale:sizeScale,position:pos,zOrder:zOrder});
         broadcast({type:'bn-product-add',id:id,src:src,ratio:item.ratio||1,name:item.name,index:i,sizeScale:sizeScale,position:pos});
         if(!item.fromExisting) newIds.push(id);
         await new Promise(function(r){setTimeout(r,50);});
       }
       renderProdList();
+      /* 商品全部上傳後，自動廣播最佳構圖預設
+         → 讓每個 iframe 的 _smartAutoLayout 正確排版，不需手動點構圖按鈕 */
+      _broadcastBestCompose(window._bnProducts.length);
       /* 自動加入陰影（若勾選）*/
       if(window._bnAutoShadow!==false){
         var _newIdsForShadow=newIds.slice();
@@ -874,6 +892,39 @@
     /* 大中小位置標籤 */
     var POS_LABELS = ['主品（中）', '左配品', '右配品'];
     var POS_COLORS = ['#ee4d2d', '#666666', '#666666'];
+
+    /**
+     * _broadcastBestCompose — 依商品+人物數量自動配對最佳構圖並廣播
+     * ─────────────────────────────────────────────────────────────
+     * 優先權：商品數完全吻合 > 人物差值最小
+     * 在 bn.html context 執行，可直接讀取 window.COMPOSE_PRESETS。
+     * ─────────────────────────────────────────────────────────────
+     * @param {number} prodCount 目前上傳的商品數量
+     */
+    function _broadcastBestCompose(prodCount) {
+      if (!window.COMPOSE_PRESETS || !Array.isArray(window.COMPOSE_PRESETS)) return;
+      var personCount = window._bnPersons ? window._bnPersons.length : 0;
+      var capped = Math.min(prodCount, 2); /* 上限 2 品 */
+      if (capped === 0) return;
+
+      var bestPreset = null;
+      var bestScore  = Infinity;
+      window.COMPOSE_PRESETS.forEach(function(preset) {
+        var pProd   = (preset.prods   && preset.prods.length)   || 0;
+        var pPerson = (preset.persons && preset.persons.length) || 0;
+        if (pProd !== capped) return; /* 商品數必須完全吻合 */
+        var score = Math.abs(pPerson - personCount);
+        if (score < bestScore) { bestScore = score; bestPreset = preset; }
+      });
+
+      if (bestPreset) {
+        /* 廣播 bn-compose 到所有 iframe，觸發 _smartAutoLayout */
+        document.querySelectorAll('.preview-block iframe').forEach(function(f) {
+          try { f.contentWindow.postMessage({ type: 'bn-compose', preset: bestPreset }, '*'); }
+          catch(e) {}
+        });
+      }
+    }
 
     function renderProdList(){
       var list=document.getElementById('bn-prod-list');
@@ -1434,7 +1485,7 @@
     };
     window._bnRenderProdList = function(){ renderProdList(); };
     window._bnRenderPersonList = function(){ renderPersonList(); };
-    window._bnBroadcastPerson = function(){ if(window._bnPerson&&window._bnPerson.src){broadcast({type:'bn-person',src:window._bnPerson.src,ratio:window._bnPerson.ratio});} };
+    window._bnBroadcastPerson = function(){ broadcast({type:'bn-persons', persons:window._bnPersons}); };
     window._bnRebroadcastProducts = function(){
       var ids = (window._bnProducts||[]).map(function(p){ return p.id; });
       ids.forEach(function(id){ broadcast({type:'bn-product-remove', id:id}); });
