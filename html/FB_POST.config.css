@@ -9,7 +9,6 @@
   --canvas-w: 1200px;
   --canvas-h: 630px;
   --canvas-bg: #e7dfd8;
-  --max-kb: 450;
   --bg-img: ;
 
   /* ── 圖層清單 ──
@@ -35,10 +34,17 @@
   --bn-person-h:      90%;
 
   /* ── 商品圖 Slot ── */
-  --bn-prod-0-x: 80%;  --bn-prod-0-y: 50%;  --bn-prod-0-h: 54%;
-  --bn-prod-1-x: 60%;  --bn-prod-1-y: 40%;  --bn-prod-1-h: 40%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;
-
+  /* ⑤ 商品圖 Slot ─────────────────────────────────
+     x = 中心點水平位置（商品範圍寬度 %）
+     y = 中心點垂直位置（商品範圍高度 %）
+     h = 最大高度（商品範圍高度 %）
+     bw = 最大寬度（商品範圍寬度 %）← Contain 模式：寬型商品不爆版
+     不需要商品圖 Slot → 刪除以下全部（改用底部自動排列）
+  ─────────────────────────────────────────────── */
+  --bn-prod-0-x: 78%;  --bn-prod-0-y: 52%;  --bn-prod-0-h: 74%;  --bn-prod-0-bw: 54%;
+  --bn-prod-1-x: 54%;  --bn-prod-1-y: 38%;  --bn-prod-1-h: 50%;  --bn-prod-1-bw: 32%;
+  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;  --bn-prod-2-bw: 22%;
+  
 /* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
   --shadow-grad-from: 65;   /* 陰影可見範圍左邊界 */
   --shadow-left-x:    60;   /* 多邊形左上角，需 ≤ grad-from */

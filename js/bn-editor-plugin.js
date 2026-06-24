@@ -261,10 +261,12 @@
           /* trimAlpha：只裁透明邊距 */
           var trimmed=trimAlpha(img);
           var personId = 'person_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+          /* zOrder=0 → 最前層，新加入的人物 zOrder 排在現有人物之後（後面）*/
           window._bnPersons.push({
             id: personId,
             src: trimmed.src,
-            ratio: trimmed.ratio
+            ratio: trimmed.ratio,
+            zOrder: window._bnPersons.length  /* 先求長度再 push，第 0 人 zOrder=0（最前），第 1 人 zOrder=1（後一層）*/
           });
           broadcast({type:'bn-persons', persons:window._bnPersons});
           renderPersonList();
@@ -277,10 +279,19 @@
       if(!list)return;
       list.innerHTML='';
 
-      window._bnPersons.forEach(function(p, i){
+      /* 依 zOrder 升序排列顯示：zOrder=0 在最上方（最前層）*/
+      var zSorted = window._bnPersons.slice().sort(function(a,b){
+        return (a.zOrder||0) - (b.zOrder||0);
+      });
+
+      zSorted.forEach(function(p, sortedIdx){
         var row=document.createElement('div');row.className='bn-prod-item';
         var img=document.createElement('img');img.src=p.src;
-        var label=document.createElement('span');label.textContent='人物圖 '+(i+1);
+
+        /* 圖層標籤：以排序位置顯示「最前」「後一層」 */
+        var label=document.createElement('span');
+        label.textContent = sortedIdx === 0 ? '人物（最前層）' : '人物（後一層）';
+        label.style.cssText='font-size:11px;';
 
         var editBtn=document.createElement('button');
         editBtn.textContent='編輯';
@@ -289,17 +300,56 @@
           if(typeof openPersonEditor === 'function') openPersonEditor(p); 
         });
 
-        var rmBtn=document.createElement('button');
-        rmBtn.textContent='移除';rmBtn.className='rm';
+        /* ── 圖層 UP/DOWN 按鈕（與商品相同邏輯）── */
+        var moveWrap=document.createElement('div');moveWrap.className='bn-prod-move';
+
+        var upBtn=document.createElement('button');upBtn.textContent='▲';upBtn.title='往前一層';
+        var downBtn=document.createElement('button');downBtn.textContent='▼';downBtn.title='往後一層';
+
+        upBtn.disabled   = sortedIdx === 0;
+        downBtn.disabled = sortedIdx === zSorted.length - 1;
+        upBtn.style.opacity   = upBtn.disabled   ? '0.3' : '1';
+        downBtn.style.opacity = downBtn.disabled ? '0.3' : '1';
+
+        upBtn.addEventListener('click',(function(pid, si){ return function(){
+          var a = window._bnPersons.find(function(x){return x.id===pid;});
+          var b = zSorted[si-1];
+          if(!a||!b) return;
+          var tmp=a.zOrder; a.zOrder=b.zOrder; b.zOrder=tmp;
+          broadcastPersonZOrder();
+          renderPersonList();
+        };})(p.id, sortedIdx));
+
+        downBtn.addEventListener('click',(function(pid, si){ return function(){
+          var a = window._bnPersons.find(function(x){return x.id===pid;});
+          var b = zSorted[si+1];
+          if(!a||!b) return;
+          var tmp=a.zOrder; a.zOrder=b.zOrder; b.zOrder=tmp;
+          broadcastPersonZOrder();
+          renderPersonList();
+        };})(p.id, sortedIdx));
+
+        moveWrap.appendChild(upBtn);moveWrap.appendChild(downBtn);
+
+        var rmBtn=document.createElement('button');rmBtn.textContent='移除';rmBtn.className='rm';
         rmBtn.addEventListener('click',function(){
           window._bnPersons = window._bnPersons.filter(function(x){ return x.id !== p.id; });
           broadcast({type:'bn-persons', persons:window._bnPersons});
           renderPersonList();
         });
 
-        row.appendChild(img);row.appendChild(label);row.appendChild(editBtn);row.appendChild(rmBtn);
+        row.appendChild(img);row.appendChild(label);row.appendChild(moveWrap);row.appendChild(editBtn);row.appendChild(rmBtn);
         list.appendChild(row);
       });
+    }
+
+    /** broadcastPersonZOrder — 廣播人物圖層順序到所有 iframe
+     *  order[0] = 最前層（z 最高），與 broadcastZOrder 商品版本相同邏輯 */
+    function broadcastPersonZOrder(){
+      var order = window._bnPersons.slice()
+        .sort(function(a,b){ return (a.zOrder||0) - (b.zOrder||0); })
+        .map(function(p){ return p.id; });
+      broadcast({type:'bn-person-zorder', order: order});
     }
 
 
@@ -327,7 +377,8 @@
         upLogo.style.opacity = upLogo.disabled ? '0.3' : '1';
         dnLogo.style.opacity = dnLogo.disabled ? '0.3' : '1';
 
-        upLogo.addEventListener('click',(function(lid){return function(){
+        upLogo.addEventListener('click',(function(lid){return function(){  
+          saveHistory();
           var idx=window._bnLogos.findIndex(function(x){return x.id===lid;});
           if(idx<=0)return;
           var tmp=window._bnLogos[idx]; window._bnLogos[idx]=window._bnLogos[idx-1]; window._bnLogos[idx-1]=tmp;
@@ -841,6 +892,7 @@
 
     /* ── 套用 ── */
     async function applyWithOrder(orderedItems,skipRatio){
+       saveHistory();
       if(!orderedItems.length)return;
       /* 清除舊商品 */
       var oldIds=window._bnProducts.map(function(p){return p.id;});
@@ -984,6 +1036,7 @@
 
         var rmBtn=document.createElement('button');rmBtn.textContent='移除';rmBtn.className='rm';
         rmBtn.addEventListener('click',function(){
+           saveHistory();
           window._bnProducts=window._bnProducts.filter(function(x){return x.id!==p.id;});
           renderProdList();broadcast({type:'bn-product-remove',id:p.id});
         });
