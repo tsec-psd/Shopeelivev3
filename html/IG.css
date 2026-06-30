@@ -109,9 +109,9 @@
 .商品範圍 {
   background-color: rgb(255, 255, 255);
   position: absolute;
-  left: 34px;
+  left: 2px;
   top: 684px;
-  width: 840px;
+  width: 888px;
   height: 917px;
   z-index: 6;
 }

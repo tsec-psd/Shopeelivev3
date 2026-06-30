@@ -397,6 +397,24 @@
       setTimeout(_smartAutoLayout, 30);
     }
 
+    /* 人物就地更新：更新 src/ratio，不重置位置（編輯/去背完成後使用，邏輯比照商品圖 bn-product-update）
+       ★ 重要：若改用整批替換的 bn-persons，會清空重建所有人物 DOM，
+       連動觸發下方的「直式高窄版位避讓演算法／座標分派」重新計算，導致使用者已調整過的位置被打回預設值。
+       此處改為精準定位單一 .bn-person-box，只更新圖片來源與寬高比，不碰任何座標／x/y/h 欄位。*/
+    if (e.data.type === 'bn-person-update') {
+      var pzone2 = getProductZone(); if(!pzone2) return;
+      var pbox = pzone2.querySelector('.bn-person-box[data-id="'+e.data.id+'"]');
+      if (!pbox) return;  /* 防呆：該人物可能已被使用者移除，找不到對應 DOM 直接中止 */
+      var pImgEl = pbox.querySelector('img');
+      if (pImgEl) pImgEl.src = e.data.src;
+      /* 保持高度不變，依新 ratio 重算寬度（與商品圖相同的等比縮放策略，不動 left/top）*/
+      var newPRatio = parseFloat(e.data.ratio) || 1;
+      var curPH = parseFloat(pbox.style.height) || pbox.offsetHeight || 100;
+      pbox.style.width = Math.round(curPH * newPRatio) + 'px';
+      pbox.dataset.ratio = String(newPRatio);
+      return;
+    }
+
     /* 商品就地更新：更新 src/ratio，不重置位置（陰影重算/切換使用）*/
     if (e.data.type === 'bn-product-update') {
       var pzone = getProductZone(); if(!pzone) return;
@@ -474,6 +492,21 @@
         divider.style.setProperty('border-color', divColor, 'important');
       }
       return;
+    }
+
+    /* Legacy compatibility: single-person messages still need to be treated as persons array */
+    if (e.data.type === 'bn-person') {
+      var persons = [];
+      if (e.data.src) {
+        persons.push({
+          id: e.data.id || 'person_0',
+          src: e.data.src,
+          ratio: (typeof e.data.ratio === 'number' ? e.data.ratio : parseFloat(e.data.ratio) || 1),
+          zOrder: (typeof e.data.zOrder === 'number' ? e.data.zOrder : 0)
+        });
+      }
+      e.data.type = 'bn-persons';
+      e.data.persons = persons;
     }
 
     /* 人物圖：由 config.css 定義初始 slot，支援拖移/縮放，永遠在最上層 */
@@ -1029,6 +1062,25 @@
 
   function setupProdDrag(box,zone){
     var drag=null;
+    function postLayoutChange() {
+      if (window.parent === window) return;
+      var id = box.dataset.id;
+      if (!id) return;
+      var msg = {
+        type: box.classList.contains('bn-person-box') ? 'bn-person-layout' : 'bn-product-layout',
+        id: id,
+        left: parseFloat(box.style.left) || 0,
+        top: parseFloat(box.style.top) || 0,
+        width: parseFloat(box.style.width) || 0,
+        height: parseFloat(box.style.height) || 0,
+      };
+      if (box.dataset.sizeScale !== undefined) msg.sizeScale = parseFloat(box.dataset.sizeScale) || 1;
+      if (box.classList.contains('bn-person-box') && box.dataset.zOrder !== undefined) {
+        msg.zOrder = parseInt(box.dataset.zOrder, 10);
+      }
+      window.parent.postMessage(msg, '*');
+    }
+
     /* 人物圖：允許垂直向下超出 zone（下半身可超出畫布被裁切） */
     var isPersonBox = box.classList.contains('bn-person-box');
     box.addEventListener('pointerdown',function(e){
@@ -1066,7 +1118,10 @@
         box.style.left=l+'px'; box.style.top=t+'px';
         box.style.width=w+'px'; box.style.height=bh+'px';
       });
-      h.addEventListener('pointerup',function(){ drag=null; });
+      h.addEventListener('pointerup',function(){
+        if (drag) postLayoutChange();
+        drag=null;
+      });
     });
     box.addEventListener('pointermove',function(e){
       if(!drag||drag.type!=='move') return;
@@ -1076,7 +1131,10 @@
       box.style.top=(isPersonBox?Math.max(0,newTop):Math.max(0,Math.min(drag.zh-drag.h,newTop)))+'px';
     });
     box.addEventListener('pointerup',function(){
-      if(drag) box.dataset.userMoved='1'; /* 有拖移/縮放 → 記錄手動定位 */
+      if(drag) {
+        box.dataset.userMoved='1'; /* 有拖移/縮放 → 記錄手動定位 */
+        postLayoutChange();
+      }
       drag=null;
       box.style.outline='2px solid transparent';
     });
@@ -1090,6 +1148,7 @@
       box.style.left=Math.max(0,Math.min(cx-w/2,zr.width-w))+'px';
       box.style.top =Math.max(0,Math.min(cy-bh/2,zr.height-bh))+'px';
       box.style.width=w+'px'; box.style.height=bh+'px';
+      postLayoutChange();
     },{passive:false});
   }
 
@@ -1414,28 +1473,18 @@ function _applyCompose(rawPreset) {
   // 1. 隔離性深拷貝防止多版位傳址污染
   var preset = JSON.parse(JSON.stringify(rawPreset));
 
-  // 2. 探測尺寸與長寬比補正
+  // 2. 探測「商品範圍」尺寸，供下面換算人物/商品 box 的 px 座標用
   var pcs = window.getComputedStyle(pzone);
   var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
   var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
-  var isVertical  = (zw / zh) <= 1.0; 
 
-  // 3. 直式高窄版位避讓演算法 (維持對角線逃逸優化)
-  if (isVertical) {
-    if (preset.persons && preset.persons.length > 0) {
-      if (preset.persons.length === 1) {
-        preset.persons[0].x = -8;
-        preset.persons[0].h = Math.min(preset.persons[0].h, 82);
-        preset.prods.forEach(function(p) { p.x = Math.min(95, p.x + 6); p.h = Math.round(p.h * 0.85); });
-      } else if (preset.persons.length >= 2) {
-        preset.persons[0].x = -15; preset.persons[0].h = 75;
-        preset.persons[1].x = 12;  preset.persons[1].h = 75;
-        if (preset.prods && preset.prods.length > 0) {
-          preset.prods.forEach(function(p) { p.x = Math.min(92, p.x + 5); p.y = Math.max(15, p.y - 12); p.h = Math.round(p.h * 0.75); });
-        }
-      }
-    }
-  }
+  /* ★ 不再自己判斷橫式/直式、不再二次覆寫 preset 的 x/h！
+     bn.html 的 applyComposeBroadcast() 已經用每個版位回報的真實
+     canvas 寬高（l.w/l.h）判斷方向，並依 COMPOSE_PRESETS 裡的
+     preset.vertical（若有提供）送出對應座標。
+     這裡如果再用一套公式覆寫一次，會把 bn.html 精心送來的座標
+     （尤其是直式版位的 preset.vertical 值）疊加修改、整組跑掉。
+     layout-runtime.js 在這裡只負責「忠實套用收到的 preset」。 */
 
   // ════════════════════════════════════════════════════════════════════
   // 4. 全全域【人物圖層】動態剪裁與優先權配對
