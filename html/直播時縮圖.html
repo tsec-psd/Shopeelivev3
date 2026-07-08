@@ -88,6 +88,22 @@ html, body {
       <div class="廠商LOGO範圍" style="pointer-events:none;"></div>
     </div>
 
+    <!-- ══ SBD 限定蝦導播LOGO ══
+         ★ 圖檔跟公版蝦導播LOGO不同（sbd-logo_紅.png / sbd-logo_白.png），
+           所以用獨立 class「蝦導播官方LOGO_SBD」，不跟公版共用，
+           避免 layout-runtime.js 廣播時兩顆LOGO搶著套用同一組路徑。
+         ★ 顯示/隱藏交給 config.css 的 body.sbd-mode 選擇器控制，
+           不需要額外 JS 監聽。 -->
+    <div class="SBD_LOGO範圍" style="pointer-events:none;">
+      <img class="蝦導播官方LOGO_SBD"
+           src="../img/sbd-logo_紅.png"
+           alt="蝦導播-SBD"
+           onerror="this.style.display='none'"
+           style="width:100%; height:100%;
+                  object-fit:contain; object-position:left center;
+                  display:block; pointer-events:none;">
+    </div>
+
     <!-- 其他圖層由 layout-runtime.js 動態建立 -->
 
     <!-- ══ 直播遮罩（最上層）══

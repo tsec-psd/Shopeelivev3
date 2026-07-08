@@ -66,10 +66,6 @@
      bw = 最大寬度（商品範圍寬度 %）← Contain 模式：寬型商品不爆版
      不需要商品圖 Slot → 刪除以下全部（改用底部自動排列）
   ─────────────────────────────────────────────── */
-  --bn-prod-0-x: 78%;  --bn-prod-0-y: 52%;  --bn-prod-0-h: 74%;  --bn-prod-0-bw: 46%;
-  --bn-prod-1-x: 54%;  --bn-prod-1-y: 38%;  --bn-prod-1-h: 50%;  --bn-prod-1-bw: 28%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;  --bn-prod-2-bw: 22%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;
 
 /* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
   --shadow-grad-from: 55;   /* 陰影可見範圍左邊界 */
@@ -121,7 +117,7 @@
 
 
 /* ══════════════════════════════════════════════
-   ⑦ LOGO 條整體：Flex 橫排，水平置中
+   ⑦ LOGO 條整體：Flex 橫排，水平置中（公版模式，維持原樣不動）
    → top：LOGO 條上緣 Y 座標（PS 變形面板）
    → height：LOGO 條高度（PS 量取）
    ══════════════════════════════════════════════ */
@@ -140,7 +136,7 @@
 }
 
 
-/* ⑧ 蝦導播 LOGO 範圍 ────────────────────────────
+/* ⑧ 蝦導播 LOGO 範圍（公版模式，維持原樣不動）────────────
    → position: relative（flex item，不用 absolute）
    → W / H 從 PS 變形面板取
 ─────────────────────────────────────────────── */
@@ -156,7 +152,7 @@
 }
 
 
-/* ⑨ 分隔線 ──────────────────────────────────────
+/* ⑨ 分隔線（公版模式，維持原樣不動）──────────────────────
    → position: relative（flex item）
    → height 建議 = 蝦導播LOGO高度 × 0.6
    → background-color 跟設計稿顏色（系統會自動切橘/白）
@@ -172,7 +168,7 @@
 }
 
 
-/* ⑩ 廠商 LOGO 範圍 ──────────────────────────────
+/* ⑩ 廠商 LOGO 範圍（公版模式，維持原樣不動）──────────────
    → position: relative（flex item）
    → width/height = 最大允許尺寸，必須與 --logo-zone-w/h 一致
    → flex-shrink: 1 → logo 過大時自動縮小
@@ -191,3 +187,90 @@
 .蝦導播LOGO範圍 { opacity: 1 !important; }
 
 
+/* ══════════════════════════════════════════════════════════════
+   ⑪ SBD 模式專屬排版 ── 只用 body.sbd-mode 前綴覆寫，公版完全不受影響
+   ★ 重要：不新增重複 DOM，是對「同一批既有節點」疊加 SBD 專屬座標。
+     理由：.廠商LOGO範圍 的廠商圖片是靠 --logo-target 用
+     querySelector（單一抓取）注入的，若複製一份同 class 節點，
+     圖片只會塞進其中一個，另一個永遠是空的——所以絕對不能複製節點，
+     只能用更高優先度的選擇器去覆寫同一個節點的定位方式。
+   ══════════════════════════════════════════════════════════════ */
+
+/* 容器本身：SBD模式下貼齊整個畫布（0,0 ~ 100%），
+   子層才能直接套用 PS 給的「畫布絕對座標」，不用換算父層偏移量 */
+body.sbd-mode .LOGO範圍 {
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important; /* SBD模式改用絕對定位，不需要flex排版 */
+}
+
+/* 蝦導播LOGO：SBD模式座標 left220 / top76 / w280 / h38 */
+body.sbd-mode .蝦導播LOGO範圍 {
+  position: absolute !important;
+  left: 220px !important;
+  top:  76px !important;
+  width:  280px !important;
+  height: 38px !important;
+}
+
+/* 分隔線：SBD模式座標 left389 / top126 / w3 / h32 */
+body.sbd-mode .分隔線 {
+  position: absolute !important;
+  left: 389px !important;
+  top:  126px !important;
+  width:  3px !important;
+  height: 32px !important;
+}
+
+/* 廠商LOGO：SBD模式座標 left407 / top120 / w93 / h42
+   ★ 同一個節點，只是換位置，廠商圖片注入邏輯完全不受影響 */
+body.sbd-mode .廠商LOGO範圍 {
+  position: absolute !important;
+  left: 407px !important;
+  top:  120px !important;
+  width:  93px !important;
+  height: 42px !important;
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   ⑫ SBD 限定蝦導播LOGO（全新獨立元素，不存在命名衝突，維持原樣）
+   ★ 公版模式：完全不出現（display:none）
+   ★ SBD 模式：疊加顯示，跟上面覆寫後的三個節點一起組成SBD專屬排版
+   ★ PS 座標：left 220 / top 120 / w 150 / h 42
+   ══════════════════════════════════════════════════════════════ */
+.SBD_LOGO範圍 {
+  position: absolute !important;
+  left: 220px !important;
+  top:  120px !important;
+  width:  150px !important;
+  height: 42px !important;
+  overflow: hidden;
+  background-color: transparent !important;
+  z-index: 178;
+  display: none !important; /* 預設（公版模式）隱藏 */
+  opacity: 1 !important;
+}
+body.sbd-mode .SBD_LOGO範圍 { display: block !important; }
+
+/* SBD 限定LOGO 圖檔路徑（可覆寫，未設定時 fallback 到 JS 內建預設） */
+:root {
+  --sbd-logo-red:   "../img/sbd-logo_紅.png";
+  --sbd-logo-white: "../img/sbd-logo_白.png";
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════
+   SBD 構圖模式 — 裁切窗口座標 + 整張裝飾覆蓋圖
+   ★★★ 座標為暫定示意值，非 PS 量測真實數字，正式上線前務必核對 ★★★
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --bn-sbd-window-x: 220.66px;
+  --bn-sbd-window-y: 297.03px;
+  --bn-sbd-window-w: 336.82px;
+  --bn-sbd-window-h: 250.42px;
+  --bn-sbd-overlay: "SBD_白框_直播時縮圖.png";
+}

@@ -15,7 +15,7 @@
      ★ 修正：移除「購物專家」（此版位無主持）
      ★ bar範圍 保留供日後補 CSS 使用
   */
-  --layers: "商品範圍|,bar範圍|,主標|主標,日期|5/31 21:00,副標|副標,購物專家|購物專家";
+  --layers: "商品範圍|,bar範圍|,主標|主標,日期|5/31 21:00,副標|副標";
   --cta-classes: "";
 
   /* ── LOGO 設定 ── */
@@ -41,9 +41,6 @@
      bw = 最大寬度（商品範圍寬度 %）← Contain 模式：寬型商品不爆版
      不需要商品圖 Slot → 刪除以下全部（改用底部自動排列）
   ─────────────────────────────────────────────── */
-  --bn-prod-0-x: 78%;  --bn-prod-0-y: 52%;  --bn-prod-0-h: 74%;  --bn-prod-0-bw: 54%;
-  --bn-prod-1-x: 54%;  --bn-prod-1-y: 38%;  --bn-prod-1-h: 50%;  --bn-prod-1-bw: 32%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;  --bn-prod-2-bw: 22%;
   
 /* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
   --shadow-grad-from: 65;   /* 陰影可見範圍左邊界 */
@@ -115,4 +112,23 @@
 .蝦皮LOGO範圍 {
   background-color: transparent !important;
   opacity: 1 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SBD 構圖模式 — 裁切窗口座標 + 整張裝飾覆蓋圖
+   ★★★ 座標為暫定示意值，非 PS 量測真實數字，正式上線前務必核對 ★★★
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --bn-sbd-window-x: 723.38px;
+  --bn-sbd-window-y: 105.94px;
+  --bn-sbd-window-w: 440.68px;
+  --bn-sbd-window-h: 363.9px;
+  --bn-sbd-overlay: "SBD_白框_FB Post.png";
+  
+}
+:root {
+  --bn-sbd-prodzone-x: 723.38px;
+  --bn-sbd-prodzone-y: 105.94px;
+  --bn-sbd-prodzone-w: 440.68px;
+  --bn-sbd-prodzone-h: 363.9px;
 }

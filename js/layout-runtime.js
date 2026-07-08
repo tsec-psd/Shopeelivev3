@@ -363,8 +363,11 @@
     /* 商品新增 */
     if (e.data.type === 'bn-product-add') {
       var pzone = getProductZone(); if(!pzone) return;
-      /* 去重：移除相同 id 的舊 box */
-      var existing = pzone.querySelector('.bn-prod-box[data-id="'+e.data.id+'"]');
+      /* ★ SBD 模式下商品要掛進白框（被裁切），公版模式維持掛在商品範圍 */
+      var prodZone = getProdZone();
+      /* 去重：用 queryProdBox 跨容器搜尋（不管舊 box 當時是掛在
+         白框內還是商品範圍下都找得到），移除相同 id 的舊 box */
+      var existing = queryProdBox(e.data.id);
       if (existing) existing.remove();
       pzone.style.background = 'transparent'; pzone.style.opacity = '1';
       pzone.style.overflow = 'visible'; pzone.style.position = 'relative';
@@ -374,6 +377,16 @@
       box.dataset.ratio = e.data.ratio||1;
       box.dataset.sizeScale = e.data.sizeScale||1;
       box.dataset.position  = e.data.position !== undefined ? e.data.position : e.data.index || 0;
+      /* ★ 手動位置還原用：只有 userMoved 且百分比座標為有效數字時才記錄，
+         其餘情況維持 undefined，讓下方 applyManualProductPositions() 略過、
+         繼續吃 layoutProducts()/_smartAutoLayout() 的自動排版結果 */
+      box.dataset.userMoved = e.data.userMoved ? '1' : '0';
+      if (e.data.userMoved && typeof e.data.leftPct === 'number') {
+        box.dataset.leftPct   = e.data.leftPct;
+        box.dataset.topPct    = e.data.topPct;
+        box.dataset.widthPct  = e.data.widthPct;
+        box.dataset.heightPct = e.data.heightPct;
+      }
       /* 明確加 pointer-events:auto，確保不繼承父容器的 pointer-events:none */
       box.style.pointerEvents = 'auto';
       var pimg = document.createElement('img'); pimg.src = e.data.src;
@@ -389,12 +402,16 @@
           (c==='se'?'right:-7px;bottom:-7px;cursor:nwse-resize;':'');
         box.appendChild(h);
       });
-      pzone.appendChild(box);
-      setupProdDrag(box, pzone);
-      layoutProducts(pzone);
+      prodZone.appendChild(box);
+      setupProdDrag(box, prodZone);
+      layoutProducts(prodZone);
       /* 商品盒建立完成後延遲 30ms，等待同批次所有 bn-product-add 落地後
-         再執行 _smartAutoLayout，避免中途觸發導致位置計算不完整 */
+         再執行 _smartAutoLayout，避免中途觸發導致位置計算不完整；
+         再延遲到 60ms，於自動排版跑完後，把「使用者真的手動調過」的
+         商品位置用百分比覆寫回來 —— 覆寫必須排在自動排版之後，
+         不然會被 layoutProducts()/_smartAutoLayout() 的結果蓋掉。*/
       setTimeout(_smartAutoLayout, 30);
+      setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
     }
 
     /* 人物就地更新：更新 src/ratio，不重置位置（編輯/去背完成後使用，邏輯比照商品圖 bn-product-update）
@@ -417,8 +434,7 @@
 
     /* 商品就地更新：更新 src/ratio，不重置位置（陰影重算/切換使用）*/
     if (e.data.type === 'bn-product-update') {
-      var pzone = getProductZone(); if(!pzone) return;
-      var box = pzone.querySelector('.bn-prod-box[data-id="'+e.data.id+'"]');
+      var box = queryProdBox(e.data.id);
       if (!box) return;
       var imgEl = box.querySelector('img');
       if (imgEl) imgEl.src = e.data.src;
@@ -432,20 +448,22 @@
 
     if (e.data.type === 'bn-product-remove') {
       var pzone = getProductZone(); if(!pzone) return;
-      var el = pzone.querySelector('.bn-prod-box[data-id="'+e.data.id+'"]');
+      var el = queryProdBox(e.data.id);
       if(el) el.remove();
-      var remaining = pzone.querySelectorAll('.bn-prod-box');
+      var remaining = queryAllProdBox();
       if(!remaining.length) { pzone.style.background=''; pzone.style.opacity=''; }
-      else setTimeout(_smartAutoLayout, 30);
+      else {
+        setTimeout(_smartAutoLayout, 30);
+        setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+      }
     }
 
     /* z-index 順序更新：order[0] = 最上層（z 最高） */
     if (e.data.type === 'bn-product-zorder') {
-      var pzone = getProductZone(); if(!pzone) return;
       var order = e.data.order || [];
       var total = order.length;
       order.forEach(function(id, i){
-        var box = pzone.querySelector('.bn-prod-box[data-id="'+id+'"]');
+        var box = queryProdBox(id);
         if(box) box.style.zIndex = String(total - i + 10);
       });
     }
@@ -470,24 +488,128 @@
       return;
     }
 
+    /* SBD 構圖模式切換：'sbd' ↔ 'normal'
+       ★ 防呆：若此版位 config.css 未定義 --bn-sbd-frame-* 座標，
+         _switchSbdMode 內的 getProdZone() 會誠實 fallback 回商品範圍，
+         畫面維持原樣顯示，不會因為缺座標而報錯或跑版。
+       ★ try/catch：任何未預期錯誤都印出 console.error 並安全結束，
+         不讓例外往外拋，波及同一輪事件迴圈裡其他還沒執行到的邏輯。*/
+    if (e.data.type === 'bn-layout-mode') {
+      try {
+        _switchSbdMode(e.data.mode === 'sbd');
+      } catch (err) {
+        console.error('[SBD] 模式切換失敗：', err);
+      }
+      return;
+    }
+
+    /* SBD KV 視覺底圖上傳：填入白框內的 <img class="bn-kv-bg">
+       ★ 防呆：若此版位尚未支援 SBD（白框不存在），直接安靜略過，
+         不強行建立錯誤的容器，避免污染公版模式畫面。*/
+    if (e.data.type === 'bn-kv-image') {
+      try {
+        var kvFrame = getCanvasEl() ? getCanvasEl().querySelector('.bn-kv-frame') : null;
+        if (!kvFrame) return; /* 此版位無 SBD 白框，忽略此訊息 */
+        var kvImg = kvFrame.querySelector('.bn-kv-bg');
+        if (kvImg && e.data.src) {
+          kvImg.src = e.data.src;
+        } else if (kvImg && !e.data.src) {
+          /* 空字串代表「移除底圖」，還原成灰底 placeholder */
+          kvImg.removeAttribute('src');
+          kvImg.style.display = 'none';
+        }
+      } catch (err) {
+        console.error('[SBD] KV 底圖套用失敗：', err);
+      }
+      return;
+    }
+
+    /* SBD KV 底圖定位：側欄滑桿（水平/垂直/縮放）驅動，取代滑鼠拖曳/滾輪。
+       ★ 防呆：若此版位無 SBD 白框、或 KV 底圖尚未上傳完成（baseScale 還沒
+         算出來），_applyKvSliderTransform 內部會直接安靜 return，
+         不會報錯，也不會在還沒就緒的元素上算出 NaN 尺寸。*/
+    if (e.data.type === 'bn-kv-transform') {
+      try {
+        var kvFrame2 = getCanvasEl() ? getCanvasEl().querySelector('.bn-kv-frame') : null;
+        var kvImg2 = kvFrame2 ? kvFrame2.querySelector('.bn-kv-bg') : null;
+        if (!kvImg2) return; /* 此版位無 SBD 白框，忽略此訊息 */
+        var tz = typeof e.data.tz === 'number' ? Math.min(1, Math.max(0, e.data.tz)) : 0;
+        var tx = typeof e.data.tx === 'number' ? Math.min(1, Math.max(0, e.data.tx)) : 0.5;
+        var ty = typeof e.data.ty === 'number' ? Math.min(1, Math.max(0, e.data.ty)) : 0.5;
+        /* ★ 關鍵防呆修正：bn-kv-image 剛把 src 設上去、圖片還在非同步
+           載入中（onload 還沒觸發、baseScale 還沒算出來）時，這則訊息
+           常常會比圖片載入更早到——尤其是「上傳暫存還原」這種一次性
+           連續送出 bn-kv-image + bn-kv-transform 的情境。過去這裡是
+           安靜 return、訊息直接丟掉，畫面停在預設置中位置，只有使用者
+           手動再拉一次滑桿（重新觸發同一段程式碼、此時圖片通常已經
+           載入完成）才會套用成功，導致「暫存還原後位置不對，要手動
+           拉一下才正確」。現在先把這組數值記在圖片元素上，
+           等 onload 真正完成（_setupKvBgPanZoom 執行時）再補套用一次，
+           不會因為到達順序早於圖片載入完成而被靜靜丟棄。*/
+        if (!kvImg2._kvPanZoomState || !kvImg2._kvClampAndApply || !kvImg2._kvFrameSize) {
+          kvImg2._kvPendingTransform = { tz: tz, tx: tx, ty: ty };
+          return;
+        }
+        _applyKvSliderTransform(kvImg2, tz, tx, ty);
+      } catch (err) {
+        console.error('[SBD] KV 定位套用失敗：', err);
+      }
+      return;
+    }
+
     /* 蝦導播 LOGO 切換：橘色 ↔ 白色，同步更新分隔線顏色
        支援直式版位自訂 LOGO：config.css 可宣告
          --shopee-logo-orange: "../img/蝦導播logo_直式_橘.png"
          --shopee-logo-white:  "../img/蝦導播logo_直式_白.png"
        未宣告時 fallback 到 e.data.src（系統預設橫式 LOGO）*/
     if (e.data.type === 'bn-shopee-logo') {
-      var logoEl = document.querySelector('.蝦導播官方LOGO');
-      if (logoEl) {
-        var rootCsLogo   = getComputedStyle(document.documentElement);
+      var rootCsLogo = getComputedStyle(document.documentElement);
+
+      /* ── 公版蝦導播LOGO：查全部 .蝦導播官方LOGO 節點同步套用 ── */
+      var logoEls = document.querySelectorAll('.蝦導播官方LOGO');
+      if (logoEls.length) {
         var customOrange = (rootCsLogo.getPropertyValue('--shopee-logo-orange')||'').trim().replace(/["']/g,'');
         var customWhite  = (rootCsLogo.getPropertyValue('--shopee-logo-white') ||'').trim().replace(/["']/g,'');
         var usePath = e.data.white ? (customWhite || e.data.src) : (customOrange || e.data.src);
-        if (usePath) { logoEl.src = usePath; logoEl.style.display = 'block'; }
+        if (usePath) {
+          logoEls.forEach(function (el) {
+            el.src = usePath;
+            el.style.display = 'block';
+          });
+        }
       }
-      /* 分隔線：與 LOGO 同色——白色 LOGO → 白色，橘色 LOGO → 蝦皮橘 */
+
+      /* ── SBD 限定蝦導播LOGO：獨立圖檔，不跟公版共用路徑 ──
+         圖檔預設 sbd-logo_紅.png / sbd-logo_白.png，
+         可用 config.css 的 --sbd-logo-red / --sbd-logo-white 覆寫。
+         共用同一個 e.data.white 開關訊號，只是換一組檔名。 */
+      var sbdLogoEls = document.querySelectorAll('.蝦導播官方LOGO_SBD');
+      if (sbdLogoEls.length) {
+        var sbdRed   = (rootCsLogo.getPropertyValue('--sbd-logo-red')  ||'').trim().replace(/["']/g,'') || '../img/sbd-logo_紅.png';
+        var sbdWhite = (rootCsLogo.getPropertyValue('--sbd-logo-white')||'').trim().replace(/["']/g,'') || '../img/sbd-logo_白.png';
+        var sbdPath  = e.data.white ? sbdWhite : sbdRed;
+        sbdLogoEls.forEach(function (el) {
+          el.src = sbdPath;
+          el.style.display = 'block';
+        });
+      }
+      /* 分隔線：與 LOGO 同色
+         公版：白色LOGO → 白分隔線 / 橘色LOGO → 蝦皮橘分隔線
+         SBD模式：白色LOGO → 白分隔線 / 紅色LOGO → #d0011c
+         ★ 紅色分隔線只限「有 .SBD_LOGO範圍 這個元素的版位」（目前只有
+           直播時縮圖）且同時處於 SBD 模式時才生效。
+           layout-runtime.js 是所有版位共用的同一份檔案，
+           IG / FB_POST / 直播大廳等其他版位沒有 .SBD_LOGO範圍 這個節點，
+           即使他們之後也做了 SBD 模式，也不會被誤套用紅色，
+           會安全 fallback 回原本的蝦皮橘。*/
       var divider = document.querySelector('.分隔線');
       if (divider) {
-        var divColor = e.data.white ? 'rgba(255,255,255,0.75)' : 'rgba(238,77,45,0.85)';
+        var isSbd = document.body.classList.contains('sbd-mode');
+        var hasSbdLogoZone = !!document.querySelector('.SBD_LOGO範圍');
+        var useSbdRed = isSbd && hasSbdLogoZone;
+        var darkColor = useSbdRed ? 'rgba(208,1,28,0.85)' /* #d0011c，僅直播時縮圖的SBD模式 */
+                                   : 'rgba(238,77,45,0.85)'; /* 蝦皮橘，其他情況一律維持 */
+        var divColor = e.data.white ? 'rgba(255,255,255,0.75)' : darkColor;
         divider.style.setProperty('background',   divColor, 'important');
         divider.style.setProperty('border-color', divColor, 'important');
       }
@@ -555,6 +677,23 @@
         var leftPx       = Math.round(parseFloat(personX) / 100 * zw);
         var bottomOffset = parseFloat(personBottom)  / 100 * zh;
         var topPx        = Math.max(0, Math.round(zh - bottomOffset - hPx));
+
+        /* ★ 使用者手動拖移/縮放過這個人物 → 改用當初記下的百分比座標，
+           反推回「目前這個畫布」的實際 px，取代 config.css 的預設 slot 算法。
+           百分比是相對於畫布尺寸的比例，換到不同尺寸的版位一樣能正確還原；
+           任何一個算出來不是有限數字就放棄覆寫，安全退回預設 slot 位置。*/
+        if (personData.userMoved && typeof personData.leftPct === 'number') {
+          var mLeft = personData.leftPct   * zw;
+          var mTop  = personData.topPct    * zh;
+          var mW    = personData.widthPct  * zw;
+          var mH    = personData.heightPct * zh;
+          if ([mLeft, mTop, mW, mH].every(isFinite)) {
+            leftPx = Math.round(mLeft);
+            topPx  = Math.round(mTop);
+            wPx    = Math.round(mW);
+            hPx    = Math.round(mH);
+          }
+        }
 
         var box = document.createElement('div');
         box.className     = 'bn-person-box bn-person-idx-' + index;
@@ -712,7 +851,7 @@
               左下 76.0% 115%  ← 此 X 為斜切估算值，可微調控制斜角
             漸層方向：左→右 + 下→上 同時（對角線漸層 to top left 表達）
             羽化：blur(30px) 加強邊緣暈散 */
-      if (e.data.shadowRgba || e.data.shadowColor) {
+      if ((e.data.shadowRgba || e.data.shadowColor) && !_isSbdMode()) {
         var canvas = document.getElementById('canvas');
         if (canvas) {
           /* ── Canvas 陰影取代 div+clip-path+filter ──────────────────
@@ -866,6 +1005,32 @@
   /* 正三角排品（仿 freelyapp 邏輯）
      主品（第0張）居中最大，左配品（第1張）次之，右配品（第2張）最小
      底部對齊，所有尺寸以商品範圍 px 為單位，不超出邊界 */
+  /* ★ 手動位置覆寫：只處理 dataset.userMoved==='1' 且百分比座標存在的商品，
+     其餘商品完全不動，維持 layoutProducts()/_smartAutoLayout() 的自動排版結果。
+     必須用百分比反推目前畫布的實際 px，因為不同版位（720x720、IG、FB_POST……）
+     的畫布尺寸不同，直接套用別的畫布量出來的 px 會整個跑掉。*/
+  function applyManualProductPositions(prodZone) {
+    if (!prodZone) return;
+    var pcs = window.getComputedStyle(prodZone);
+    var zw = parseFloat(pcs.width)  || prodZone.offsetWidth  || 0;
+    var zh = parseFloat(pcs.height) || prodZone.offsetHeight || 0;
+    if (!zw || !zh) return; /* 防呆：畫布尚未有實際尺寸，跳過避免除以 0 / NaN */
+    Array.from(prodZone.querySelectorAll('.bn-prod-box')).forEach(function(box){
+      if (box.dataset.userMoved !== '1' || box.dataset.leftPct === undefined) return;
+      var l = parseFloat(box.dataset.leftPct)   * zw;
+      var t = parseFloat(box.dataset.topPct)    * zh;
+      var w = parseFloat(box.dataset.widthPct)  * zw;
+      var h = parseFloat(box.dataset.heightPct) * zh;
+      /* 防呆：任何一個算出來不是有限數字（NaN/Infinity），直接放棄覆寫，
+         讓商品保留自動排版結果，總比整個消失或飛到畫面外好 */
+      if (![l,t,w,h].every(isFinite)) return;
+      box.style.left   = Math.round(l) + 'px';
+      box.style.top    = Math.round(t) + 'px';
+      box.style.width  = Math.round(w) + 'px';
+      box.style.height = Math.round(h) + 'px';
+    });
+  }
+
   function layoutProducts(pzone) {
     var allBoxes = Array.from(pzone.querySelectorAll('.bn-prod-box'));
     var n = allBoxes.length; if(!n) return;
@@ -945,6 +1110,7 @@
           'cursor:move;box-sizing:border-box;',
           'outline:2px solid transparent;',
           'overflow:visible;',
+          'pointer-events:auto;', /* ★ cssText 整段覆蓋會洗掉建立時設定的值，這裡明確補回 */
           /* 主品（i=0）在後，配品依序往前 */
           'z-index:'+(10+i)+';',
         ].join('');
@@ -1048,6 +1214,7 @@
         'cursor:move;box-sizing:border-box;',
         'outline:2px solid transparent;',
         'overflow:visible;',   /* handle 超出 box 邊界時不被裁切 */
+        'pointer-events:auto;', /* ★ cssText 整段覆蓋會洗掉建立時設定的值，這裡明確補回 */
         'z-index:'+(15-i)+';',
       ].join('');
     });
@@ -1060,20 +1227,396 @@
     return null;
   }
 
+  /* ★ 修正版說明：.bn-kv-frame 現在是 #canvas 的直接子層（與 .商品範圍、
+     .LOGO範圍 同級），採用與其他圖層一致的「畫布絕對座標」慣例，
+     不再嵌套於 .商品範圍 內部——因為 .商品範圍 本身只是一個 480×337px
+     的小範圍（左上角在畫布 635,23），遠小於 SBD 白框實際需要的視覺範圍，
+     嵌套在裡面會導致座標基準錯亂（框被誤判成相對小範圍計算，實際渲染
+     位置跑到畫布外被裁掉）。改成 canvas 子層後，config.css 的
+     --bn-sbd-frame-x/y/w/h 就跟其他圖層一樣，直接是畫布 1125×360 的
+     絕對像素座標，所見即所得，PS 量測時也不用額外換算。
+     
+     副作用：商品 box 搬進白框後，不再是 .商品範圍 的後代節點，
+     所以任何原本用 pzone.querySelector('.bn-prod-box...') 的地方，
+     都必須改成從 #canvas 查詢（因為 #canvas 才是白框與商品範圍的
+     共同祖先），下面的 getCanvasEl() / queryProdBox() 就是為此而生。 */
+  function getCanvasEl(){
+    return document.getElementById('canvas');
+  }
+  /* 依 id 找單一商品 box，不管它現在掛在 .商品範圍 還是 .bn-kv-frame 底下都找得到 */
+  function queryProdBox(id){
+    var c = getCanvasEl();
+    return c ? c.querySelector('.bn-prod-box[data-id="'+id+'"]') : null;
+  }
+  /* 找出畫布上所有商品 box（跨容器） */
+  function queryAllProdBox(){
+    var c = getCanvasEl();
+    return c ? c.querySelectorAll('.bn-prod-box') : [];
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     SBD 構圖模式 — KV 視覺白框引擎（v2：改為整張裝飾圖片方案）
+     ────────────────────────────────────────────────────────────
+     設計原則：
+       1. 完全「新增」，不動舊有公版邏輯。公版模式下 getProdZone()
+          回傳值與 getProductZone() 完全相同，行為 100% 向下相容。
+       2. 白框造型（含缺角、「超級品牌日」緞帶、LIVE 標籤）改用
+          「一張整張畫布尺寸(1125×360)的透明背景 PNG」直接疊圖，
+          不再用 CSS border/矩形遮色片/skew 土法拼接——
+          設計稿長怎樣，疊上去就是怎樣，100% 還原，
+          而且純 <img> 疊圖是 html2canvas 最穩定的匯出方式，
+          比任何 CSS 造型技巧都不容易在匯出時失真。
+       3. .bn-kv-frame 現在的角色改成「純裁切窗口」：一個看不見的
+          矩形（overflow:hidden，無背景、無邊框），只負責把 KV 底圖
+          與商品圖限制在正確的可視範圍內——這個範圍必須對準裝飾 PNG
+          裡「挖空的透明窗口」的實際位置，兩者對不齊，商品就會跑到
+          白框邊框或缺角下面，或是留白跟裝飾對不上。
+       4. 疊放順序（由下到上）：.bn-kv-frame（KV+商品，被裁切）
+          → .bn-kv-overlay（整張裝飾 PNG，蓋在最上層，pointer-events:
+          none 不擋拖曳）。
+     ════════════════════════════════════════════════════════════ */
+
+  /* 判斷目前是否為 SBD 模式（body class 由 bn-layout-mode 訊息控制）*/
+  function _isSbdMode(){
+    return document.body.classList.contains('sbd-mode');
+  }
+
+  /* 讀取此版位 config.css 是否有定義 SBD 裁切窗口座標。
+     沒定義 → 代表這個版位還沒被 PS 量測、尚未支援 SBD，
+     必須誠實回報「不支援」，而不是硬套錯誤座標讓畫面跑版。
+     ★ 這裡的 x/y/w/h 現在代表「裝飾 PNG 裡透明窗口」的實際位置，
+       不是白框外緣，兩者容易搞混，量測時務必確認清楚。*/
+  function _sbdFrameConfig(){
+    var cs = getComputedStyle(document.documentElement);
+    var x = (cs.getPropertyValue('--bn-sbd-window-x') || '').trim();
+    var y = (cs.getPropertyValue('--bn-sbd-window-y') || '').trim();
+    var w = (cs.getPropertyValue('--bn-sbd-window-w') || '').trim();
+    var h = (cs.getPropertyValue('--bn-sbd-window-h') || '').trim();
+    if (!x || !y || !w || !h) return null; /* 此版位未支援 SBD */
+    return { x: parseFloat(x), y: parseFloat(y), w: parseFloat(w), h: parseFloat(h) };
+  }
+
+  /* 建立（或取得既有）裁切窗口 + 裝飾覆蓋圖。只在第一次進入 SBD
+     模式時建立一次，之後重複呼叫直接回傳快取節點，避免重複插入。
+     ★ 單一絕對座標窗口：KV 底圖與商品都掛在同一個 .bn-kv-frame 裡，
+       共用同一組裁切範圍，不再拆成兩個矩形——兩者永遠保證對齊、同步。*/
+  function _ensureSbdFrame(){
+    var canvas = getCanvasEl();
+    if (!canvas) return null;
+    var cfg = _sbdFrameConfig();
+    if (!cfg) return null; /* 誠實防呆：此版位尚無 SBD 座標，直接放棄，不強行建立 */
+
+    var frame = canvas.querySelector('.bn-kv-frame');
+    if (frame) { _applySbdFrameGeometry(frame, cfg); return frame; }
+
+    /* ① 裁切窗口：看不見的矩形，只負責 overflow:hidden，
+       KV 底圖與商品圖都掛在這裡面，被限制在窗口範圍內 */
+    frame = document.createElement('div');
+    frame.className = 'bn-kv-frame';
+    frame.style.cssText = 'position:absolute;overflow:hidden;background:transparent;';
+
+    var bg = document.createElement('img');
+    bg.className = 'bn-kv-bg';
+    bg.alt = '';
+    /* ★ 不用 object-fit:cover 自動鋪滿——改成手動控制 width/height/left/top，
+       才能支援側欄滑桿驅動的定位。pointer-events:none，
+       因為定位已完全交給滑桿，KV 底圖本身不需要再接收滑鼠事件。*/
+    bg.style.cssText = 'position:absolute;top:0;left:0;display:none;pointer-events:none;';
+    bg.onerror = function(){ this.style.display = 'none'; };
+    bg.onload  = function(){ this.style.display = 'block'; _setupKvBgPanZoom(bg, frame); };
+    frame.appendChild(bg);
+
+    canvas.appendChild(frame);
+    _applySbdFrameGeometry(frame, cfg);
+
+    /* ② 裝飾覆蓋圖：整張畫布尺寸的透明背景 PNG，
+       疊在裁切窗口之上，白框造型/缺角/緞帶/LIVE 全部烤在這張圖裡。
+       ★ 檔名改由 config.css 的 --bn-sbd-overlay 變數指定
+         （不再寫死在這裡），每個版位在自己的 config.css 填自己
+         對應的圖檔名即可，例如：
+           --bn-sbd-overlay: "SBD_白框_直播大廳.png";
+         沒有設定這個變數時，安靜跳過覆蓋圖建立（只有裁切窗口，
+         沒有裝飾框），不會報錯，也方便日後擴充更多版位。*/
+    var overlayName = getComputedStyle(document.documentElement)
+      .getPropertyValue('--bn-sbd-overlay').trim().replace(/^["']|["']$/g, '');
+    if (overlayName && !canvas.querySelector('.bn-kv-overlay')) {
+      var overlay = document.createElement('img');
+      overlay.className = 'bn-kv-overlay';
+      overlay.alt = '';
+      overlay.src = '../img/' + overlayName;
+      overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;'+
+        'object-fit:contain;pointer-events:none;';
+      overlay.onerror = function(){
+        console.error('[SBD] 覆蓋圖載入失敗，確認 img/'+overlayName+' 是否存在');
+        this.style.display = 'none';
+      };
+      canvas.appendChild(overlay);
+    }
+
+    return frame;
+  }
+
+  function _applySbdFrameGeometry(frame, cfg){
+    frame.style.left   = cfg.x + 'px';
+    frame.style.top    = cfg.y + 'px';
+    frame.style.width  = cfg.w + 'px';
+    frame.style.height = cfg.h + 'px';
+  }
+
+  /* KV 背景圖定位：改由側欄滑桿驅動（水平/垂直/縮放），
+     不再支援滑鼠拖曳或滾輪縮放——因為 KV 底圖常被商品/人物擋住，
+     畫布上直接拖曳常常點不準，統一改成側欄的數值滑桿操作。
+     ★ 核心防呆沿用原本設計：縮放有下限(baseScale)，等於「剛好鋪滿窗口」
+       的比例，不管滑桿怎麼拉都不會讓窗口露出空白；平移同樣會被
+       clampAndApply() 夾住，圖片邊緣永遠不會超出窗口內側。
+     ★ 換圖防呆：使用者重新上傳 KV 圖時，onload 會再次觸發——
+       「基準縮放/位移」每次 onload 都要重新計算並重置回置中，
+       否則沿用舊圖的 baseScale，新圖尺寸不同就會跑版。*/
+  var KV_ZOOM_MAX_MULTIPLIER = 3; /* 縮放滑桿拉到最大時，相對 baseScale 的放大倍率上限 */
+
+  function _setupKvBgPanZoom(bg, frame){
+    var state = bg._kvPanZoomState;
+    if (!state) {
+      state = bg._kvPanZoomState = { scale: 1, baseScale: 1, offX: 0, offY: 0 };
+    }
+
+    function frameSize(){
+      return { w: parseFloat(frame.style.width) || frame.offsetWidth || 1,
+               h: parseFloat(frame.style.height) || frame.offsetHeight || 1 };
+    }
+
+    function clampAndApply(){
+      var natW = bg.naturalWidth || 1, natH = bg.naturalHeight || 1;
+      var fs = frameSize();
+      var w = natW * state.scale, h = natH * state.scale;
+      /* 圖片永遠不能比窗口小，否則會露出窗口底色 —— clamp 位移，
+         確保圖片四邊都蓋住窗口（offX 落在 [窗口寬-圖寬, 0] 區間內）*/
+      state.offX = Math.min(0, Math.max(fs.w - w, state.offX));
+      state.offY = Math.min(0, Math.max(fs.h - h, state.offY));
+      bg.style.width  = w + 'px';
+      bg.style.height = h + 'px';
+      bg.style.left   = state.offX + 'px';
+      bg.style.top    = state.offY + 'px';
+    }
+    /* 掛到 bg 元素上，讓「側欄滑桿訊息處理」可以直接呼叫同一份 clamp 邏輯，
+       避免另外重寫一份公式、之後兩邊改一邊忘記改另一邊 */
+    bg._kvClampAndApply = clampAndApply;
+    bg._kvFrameSize = frameSize;
+
+    /* 每次 onload 都重新計算基準縮放：baseScale = 剛好鋪滿窗口
+       （等同原本 object-fit:cover 的效果），並重新置中——
+       換成新圖時，尺寸/比例可能完全不同，舊的 scale/offset 沒有意義 */
+    var natW = bg.naturalWidth || 1, natH = bg.naturalHeight || 1;
+    var fs0 = frameSize();
+    state.baseScale = Math.max(fs0.w / natW, fs0.h / natH);
+    state.scale = state.baseScale;
+    state.offX = (fs0.w - natW * state.scale) / 2;
+    state.offY = (fs0.h - natH * state.scale) / 2;
+    clampAndApply();
+
+    /* ★ 補套用先前因為圖片還沒載入完成、被暫存起來的滑桿數值
+       （見 bn-kv-transform 訊息處理），確保「暫存還原」這種
+       圖片載入與定位訊息幾乎同時抵達的情境，最終畫面停在使用者
+       原本調整的位置，而不是預設置中——不需要使用者再手動拉一次。*/
+    if (bg._kvPendingTransform) {
+      var pending = bg._kvPendingTransform;
+      bg._kvPendingTransform = null;
+      _applyKvSliderTransform(bg, pending.tz, pending.tx, pending.ty);
+    }
+
+    /* 回報「這個版位的 KV 底圖已成功載入、可以互動」給父層側欄，
+       側欄收到後才會在這個版位畫布右側長出個別調整滑桿——
+       避免在圖片還沒真的套用成功時就顯示一組操作不了任何東西的滑桿。*/
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'bn-kv-ready', id: urlId }, '*');
+    }
+  }
+
+  /* 側欄滑桿（水平/垂直/縮放）套用入口：tz/tx/ty 皆為正規化 0~1 數值。
+       tz：0 = baseScale（剛好鋪滿，不留白）；1 = baseScale * KV_ZOOM_MAX_MULTIPLIER
+       tx：0 = 貼左；1 = 貼右；0.5 = 水平置中
+       ty：0 = 貼上；1 = 貼下；0.5 = 垂直置中
+     用同一組正規化數值，才能讓側欄一份滑桿同時正確驅動窗口尺寸
+     互不相同的各個版位（IG/FB/直播時縮圖…），不需要各自換算。*/
+  function _applyKvSliderTransform(bg, tz, tx, ty){
+    var state = bg._kvPanZoomState;
+    if (!state || !bg._kvClampAndApply || !bg._kvFrameSize) return; /* 防呆：圖片尚未 onload 完成，baseScale 還沒算出來 */
+
+    var fs = bg._kvFrameSize();
+    var natW = bg.naturalWidth || 1, natH = bg.naturalHeight || 1;
+
+    state.scale = state.baseScale * (1 + tz * (KV_ZOOM_MAX_MULTIPLIER - 1));
+    var w = natW * state.scale, h = natH * state.scale;
+    var slackX = Math.max(0, w - fs.w), slackY = Math.max(0, h - fs.h);
+    state.offX = -tx * slackX;
+    state.offY = -ty * slackY;
+    bg._kvClampAndApply(); /* 雙重保險：即使外部傳入異常值，也不會露出窗口底色 */
+  }
+
+  /* 商品掛載容器：SBD 模式且此版位有背景窗口座標 → 回傳背景窗口
+     （KV 底圖與商品共用同一個裁切範圍，永遠對齊、同步）；
+     否則（公版模式 / 此版位不支援 SBD）→ 回傳原本的商品範圍，
+     確保未支援 SBD 的版位收到 sbd 訊息也不會壞掉，只是原樣顯示。*/
+  function getProdZone(){
+    if (_isSbdMode()) {
+      var frame = _ensureSbdFrame();
+      if (frame) return frame;
+    }
+    return getProductZone();
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     SBD 疊放層級（z-index）規劃 —— 人物 > 商品 > 白框裝飾 > KV 背景
+     ────────────────────────────────────────────────────────────
+     問題根源：.商品範圍（裝人物）在 PS 匯出的 CSS 裡有明確
+     z-index:3，這個數字會讓它自成一個獨立堆疊層——不管人物在
+     裡面設多高的 z-index（實際是 20+），從外面看整個 .商品範圍
+     永遠只代表「3」這個高度去跟其他頂層元素比較。
+     而 .bn-kv-frame（裝 KV 背景+商品）沒有設定 z-index（auto），
+     不會形成獨立堆疊層，商品的 z-index（10~15）會直接跳出來跟
+     外部元素比較——10~15 > 3，商品才會蓋過人物，順序整個亂掉。
+
+     修法：進入 SBD 模式時，明確定義幾個數字，讓每一層都不再是
+     「巧合」而是「設計出來的順序」：
+       Z_BAR_HOST    = 31  → .bar範圍 / .購物專家（主持人 Bar，要蓋過人物）
+       Z_PERSON_HOST = 30  → .商品範圍（人物的容器）
+       Z_PRODUCT     = 10~15（既有商品 z-index，維持不動）
+       Z_OVERLAY     = 5   → .bn-kv-overlay（白框裝飾）
+       （KV 背景 .bn-kv-bg 維持 z-index:auto ≈ 0，天然最底層）
+     31 > 30 > 15(商品最高值) > 5 > 0，順序在任何情況下都固定。
+
+     ★ Bar 是「有些版位才有」的東西（--layers 清單裡才會出現
+     .bar範圍/.購物專家），所以底下用 querySelector 找不到時安靜跳過，
+     不會為了拉 Bar 的 z-index 而強行建立不存在的元素。
+     ════════════════════════════════════════════════════════════ */
+  var Z_SBD_BAR_HOST    = 31;
+  var Z_SBD_PERSON_HOST = 30;
+  var Z_SBD_OVERLAY     = 5;
+
+  /* 模式切換：把既有商品 box 在「白框」與「商品範圍」之間搬家，
+     人物 box 完全不動（人物在 SBD 構圖中本來就該留在框外），
+     並重新定義四層的 z-index，確保疊放順序固定為
+     人物 > 商品 > 白框裝飾 > KV 背景。*/
+  function _switchSbdMode(toSbd){
+    var pzone = getProductZone();
+    if (!pzone) return;
+    document.body.classList.toggle('sbd-mode', !!toSbd);
+
+    var target = getProdZone(); /* 依切換後的新狀態，算出正確的目的容器 */
+    if (!target) return;
+
+    /* ★ 用 queryAllProdBox() 而非 pzone.querySelectorAll()：
+       商品 box 現在可能掛在 .商品範圍 或 .bn-kv-frame（canvas 子層）任一邊，
+       只有從共同祖先 #canvas 查詢才能保證兩種狀態都搬得到 */
+    var prodBoxes = queryAllProdBox();
+    prodBoxes.forEach(function(box){
+      if (box.parentElement !== target) target.appendChild(box);
+      /* ★ 關鍵修正：容器換了，拖曳/縮放的計算基準也要跟著換，
+         否則 setupProdDrag 裡的滑鼠位移計算還是用舊容器的位置/尺寸，
+         跟商品實際所在的新容器對不起來，拖曳時就會跳動、中心點偏移。
+         不需要重新綁定事件監聽器，只要更新這個可變屬性即可。*/
+      box._dragZone = target;
+    });
+
+    /* 切回公版時，裁切窗口、裝飾覆蓋圖都留在 DOM 但隱藏，
+       避免下次切回 SBD 要重建；不影響公版視覺。*/
+    var canvasEl = getCanvasEl();
+    var frame    = canvasEl ? canvasEl.querySelector('.bn-kv-frame')   : null;
+    var overlay  = canvasEl ? canvasEl.querySelector('.bn-kv-overlay') : null;
+    if (frame)   frame.style.display   = toSbd ? 'block' : 'none';
+    if (overlay) overlay.style.display = toSbd ? 'block' : 'none';
+
+    if (toSbd) {
+      /* 進入 SBD：明確蓋掉 .商品範圍 原本 PS 匯出的 z-index:3，
+         讓人物容器整層拉到最上面（30），不再受限於原本的 3。
+         .bn-kv-frame 本身刻意不給 z-index（維持 auto），
+         這樣它裡面的商品(10~15)才能直接跟 overlay(5) 比較，
+         而不是被 frame 關進另一個獨立堆疊層。
+
+         ★ 關鍵防呆：.商品範圍 拉到 z-index:30 最上層後，它「空白透明的
+         背景區域」預設還是會攔截滑鼠事件，像一塊看不見的玻璃罩蓋住
+         底下的 .bn-kv-frame（KV 背景+商品），導致商品/背景整個點不到。
+         公版模式不會有這個問題，因為商品跟人物本來就是同一個容器的
+         小孩，空白區域攔不攔截點擊都無所謂。但 SBD 模式下兩者是分開
+         的獨立容器、疊在同一塊畫面上，容器本身就必須設 pointer-events:
+         none，只讓真正有內容的 .bn-person-box（已經各自明確設定
+         pointer-events:auto）可以被點到，空白區域讓點擊直接穿透過去。*/
+      pzone.style.zIndex = String(Z_SBD_PERSON_HOST);
+      pzone.style.pointerEvents = 'none';
+      if (overlay) overlay.style.zIndex = String(Z_SBD_OVERLAY);
+
+      /* ★ 購物專家 Bar 要蓋過人物，不然人物拉到 30 之後會蓋住 Bar。
+         用 querySelector 而非強行建立——有些版位（例如 01_直播時縮圖）
+         --layers 清單裡根本沒有 .bar範圍/.購物專家，找不到就安靜跳過，
+         不影響那些版位的 SBD 模式運作。*/
+      var barZone = document.querySelector('.bar範圍');
+      var barText = document.querySelector('.購物專家');
+      if (barZone) barZone.style.zIndex = String(Z_SBD_BAR_HOST);
+      if (barText) barText.style.zIndex = String(Z_SBD_BAR_HOST);
+    } else {
+      /* 切回公版：還原 .商品範圍 的 z-index 與 pointer-events，
+         讓 PS 匯出的 CSS（z-index:3）恢復生效，不影響公版原本的疊放順序。*/
+      pzone.style.zIndex = '';
+      pzone.style.pointerEvents = '';
+      if (overlay) overlay.style.zIndex = '';
+
+      var barZone2 = document.querySelector('.bar範圍');
+      var barText2 = document.querySelector('.購物專家');
+      if (barZone2) barZone2.style.zIndex = ''; /* 還原 PS 匯出的原始值 */
+      if (barText2) barText2.style.zIndex = '';
+    }
+
+    layoutProducts(target);
+    if (typeof _smartAutoLayout === 'function') _smartAutoLayout();
+    setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+
+    /* SBD 模式不需要公版的背景幾何陰影（模擬人物站立地面的那塊平行四邊形），
+       有 KV 底圖 + 白框裝飾時反而會互相干擾。切到 SBD 隱藏、切回公版還原，
+       只隱藏不刪除 DOM，避免配色器之後重新計算陰影顏色時要重新建立一次。*/
+    var shadowLayer = document.querySelector('.bn-bg-shadow-layer');
+    if (shadowLayer) shadowLayer.style.display = toSbd ? 'none' : '';
+  }
+
   function setupProdDrag(box,zone){
+    /* ★ 關鍵修正：zone 不能只靠閉包鎖死——商品在切換 SBD 模式時會被
+       搬到不同容器（.商品範圍 ↔ .bn-kv-frame），但這個函式只在商品
+       「第一次建立」時呼叫一次，重新掛載並不會重新呼叫 setupProdDrag。
+       如果 pointerdown/pointermove/wheel 都直接使用閉包裡的 zone，
+       容器換了之後，這裡算的還是舊容器的位置/尺寸，滑鼠位移量跟
+       實際渲染位置對不起來，才會有「拖曳時跳動、中心點偏移」的現象。
+       改成存在 box._dragZone 這個可變屬性上，每次操作前重新讀取，
+       重新掛載時只要更新 box._dragZone（見 _switchSbdMode），
+       不需要整個重新綁定事件監聽器。*/
+    box._dragZone = zone;
     var drag=null;
     function postLayoutChange() {
       if (window.parent === window) return;
       var id = box.dataset.id;
       if (!id) return;
+      var l = parseFloat(box.style.left) || 0;
+      var t = parseFloat(box.style.top) || 0;
+      var w = parseFloat(box.style.width) || 0;
+      var h = parseFloat(box.style.height) || 0;
       var msg = {
         type: box.classList.contains('bn-person-box') ? 'bn-person-layout' : 'bn-product-layout',
         id: id,
-        left: parseFloat(box.style.left) || 0,
-        top: parseFloat(box.style.top) || 0,
-        width: parseFloat(box.style.width) || 0,
-        height: parseFloat(box.style.height) || 0,
+        left: l, top: t, width: w, height: h,
       };
+      /* ★ 額外用「相對於當下畫布容器的百分比」記錄一份座標：
+         不同版位（01_直播時縮圖 720x720、IG、FB_POST、開播字卡直式……）
+         的畫布尺寸完全不同，單存 px 只在同一個畫布內有意義，換到別的
+         版位還原時會整個跑掉。百分比才是能跨畫布尺寸還原的座標基準。
+         userMoved：只有使用者真的手動拖過/縮放過才標記，避免還原時
+         把「從沒被動過、本來就該吃預設自動排版」的項目也鎖死成固定座標。*/
+      var curZone = box._dragZone || zone;
+      var zr = curZone ? curZone.getBoundingClientRect() : null;
+      if (zr && zr.width > 0 && zr.height > 0) {
+        msg.leftPct   = l / zr.width;
+        msg.topPct    = t / zr.height;
+        msg.widthPct  = w / zr.width;
+        msg.heightPct = h / zr.height;
+      }
+      msg.userMoved = box.dataset.userMoved === '1';
       if (box.dataset.sizeScale !== undefined) msg.sizeScale = parseFloat(box.dataset.sizeScale) || 1;
       if (box.classList.contains('bn-person-box') && box.dataset.zOrder !== undefined) {
         msg.zOrder = parseInt(box.dataset.zOrder, 10);
@@ -1086,7 +1629,8 @@
     box.addEventListener('pointerdown',function(e){
       if(e.target.dataset.corner) return;
       e.stopPropagation();
-      var zr=zone.getBoundingClientRect(),br=box.getBoundingClientRect();
+      var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
+      var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
       drag={type:'move',sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height};
       /* 選中：顯示藍框 + handle */
       box.querySelectorAll('[data-corner]').forEach(function(h){ h.style.display='block'; });
@@ -1095,7 +1639,8 @@
     box.querySelectorAll('[data-corner]').forEach(function(h){
       h.addEventListener('pointerdown',function(e){
         e.stopPropagation();
-        var zr=zone.getBoundingClientRect(),br=box.getBoundingClientRect();
+        var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
+        var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
         drag={type:'resize',corner:h.dataset.corner,sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height,ratio:parseFloat(box.dataset.ratio)||1};
         h.setPointerCapture(e.pointerId); box.style.outline='2px solid '+(isPersonBox?'#ee4d2d':'#4a90e2'); e.preventDefault();
       });
@@ -1119,7 +1664,7 @@
         box.style.width=w+'px'; box.style.height=bh+'px';
       });
       h.addEventListener('pointerup',function(){
-        if (drag) postLayoutChange();
+        if (drag) { box.dataset.userMoved='1'; postLayoutChange(); }
         drag=null;
       });
     });
@@ -1140,7 +1685,8 @@
     });
     box.addEventListener('wheel',function(e){ box.dataset.userMoved='1';
       e.preventDefault();
-      var zr=zone.getBoundingClientRect(),br=box.getBoundingClientRect();
+      var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
+      var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
       var sc=e.deltaY<0?1.08:.93,r=parseFloat(box.dataset.ratio)||1;
       var w=Math.max(40,Math.min(br.width*sc,zr.width*.95)),bh=w/r;
       if(bh<30){bh=30;w=bh*r;} if(!isPersonBox&&bh>zr.height*.95){bh=zr.height*.95;w=bh*r;}
@@ -1473,10 +2019,15 @@ function _applyCompose(rawPreset) {
   // 1. 隔離性深拷貝防止多版位傳址污染
   var preset = JSON.parse(JSON.stringify(rawPreset));
 
-  // 2. 探測「商品範圍」尺寸，供下面換算人物/商品 box 的 px 座標用
+  // 2. 探測「商品範圍」尺寸，供下面換算人物 box 的 px 座標用
   var pcs = window.getComputedStyle(pzone);
   var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
   var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
+
+  /* ★ 商品掛載容器：公版模式 prodZone === 商品範圍；SBD 模式為白框(.bn-kv-frame)。
+     實際尺寸換算已全部交給 layoutProducts()（它自己讀取容器尺寸），
+     這裡只需要拿到容器參照本身，供下方 querySelector 與 layoutProducts() 使用。 */
+  var prodZone = getProdZone();
 
   /* ★ 不再自己判斷橫式/直式、不再二次覆寫 preset 的 x/h！
      bn.html 的 applyComposeBroadcast() 已經用每個版位回報的真實
@@ -1523,7 +2074,7 @@ function _applyCompose(rawPreset) {
   // ════════════════════════════════════════════════════════════════════
   // 5. 全全域【商品圖層】動態剪裁與殘留清空
   // ════════════════════════════════════════════════════════════════════
-  var prodBoxes = pzone.querySelectorAll('.bn-prod-box');
+  var prodBoxes = prodZone.querySelectorAll('.bn-prod-box');
   var targetProdCount = (preset.prods && preset.prods.length) || 0;
 
   prodBoxes.forEach(function(box, idx) {
@@ -1541,43 +2092,29 @@ function _applyCompose(rawPreset) {
     box.style.display = 'block'; // 確保恢復顯示
 
     try {
-      var pRatio = parseFloat(box.dataset.ratio) || 1;
-      /* ★ Contain 模式：在 (maxW × maxH) 框內等比縮放，與 slot mode 邏輯一致
-         prodConfig.bw 未定義時，以 zone 寬 92% 兜底（向下相容舊 preset）*/
-      var maxH = (prodConfig.h  / 100) * zh;
-      var maxW = (prodConfig.bw !== undefined) ? (prodConfig.bw / 100) * zw : zw * 0.92;
-      var boxH, boxW;
-      if (pRatio >= maxW / maxH) { boxW = Math.round(maxW);  boxH = Math.round(boxW / pRatio); }
-      else                        { boxH = Math.round(maxH);  boxW = Math.round(boxH * pRatio); }
-
-      var boxLeft = (prodConfig.x / 100) * zw - (boxW / 2);
-      var boxTop  = (prodConfig.y / 100) * zh - (boxH / 2);
-
-      box.style.width  = boxW + 'px';
-      box.style.height = boxH + 'px';
-      box.style.left   = Math.round(boxLeft) + 'px';
-      box.style.top    = Math.round(boxTop)  + 'px';
-      box.style.zIndex = String(prodConfig.z || (10 + currentSlot));
-
-      // 烘入 Inline CSS 全域環境變數鎖定 Runtime 狀態
+      /* ★ 引擎收斂：這裡只寫入 slot CSS 變數，實際尺寸/定位交給下方唯一的
+         layoutProducts()（內含 clamp + sizeScale，一次算完）。
+         過去這裡會先自己算一次 box.style.left/top/width/height，緊接著又被
+         layoutProducts() 用不同算法（多了 clamp、sizeScale）覆蓋，等於算兩次、
+         而且「打的座標」與「最後落點」對不上。現在改成只餵座標、由單一引擎定位，
+         避免落點偏差與重繪閃動。z-index 亦統一由 layoutProducts() 指派。 */
       document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-x', prodConfig.x + '%');
       document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-y', prodConfig.y + '%');
       document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-h', prodConfig.h + '%');
-      /* ★ 同步寫入 bw CSS var，供後續 layoutProducts slot mode 讀取；未定義則清除 */
+      /* ★ 同步寫入 bw CSS var，供 layoutProducts slot mode 讀取；未定義則清除 */
       if (prodConfig.bw !== undefined) {
         document.documentElement.style.setProperty('--bn-prod-' + currentSlot + '-bw', prodConfig.bw + '%');
       } else {
         document.documentElement.style.removeProperty('--bn-prod-' + currentSlot + '-bw');
       }
-
     } catch (err) {
-      console.error('[LayoutRuntime] 商品多向動態剪裁排版重繪失敗, Slot: ' + currentSlot, err);
+      console.error('[LayoutRuntime] 商品 slot 變數寫入失敗, Slot: ' + currentSlot, err);
     }
   });
 
   // 6. 強制調用一次陰影與邊界重繪機制，維持跨版位視覺一致性
   if (typeof layoutProducts === 'function') {
-    layoutProducts(pzone);
+    layoutProducts(prodZone);
   }
 }
   /* 日期跟隨主標：
@@ -1711,8 +2248,10 @@ function _applyCompose(rawPreset) {
       /* 重套上次構圖預設：商品數量改變後維持一致的視覺排版 */
       _applyCompose(window.__bnLastPreset);
     } else {
-      /* 尚未套用任何構圖 → legacy 模式底部對齊排列（已有 zone 寬高防爆保護）*/
-      layoutProducts(pzone);
+      /* 尚未套用任何構圖 → legacy 模式底部對齊排列
+         ★ SBD 模式下改用 getProdZone()（白框），避免 legacy 排列
+           算成整個商品範圍的尺寸，導致商品跑出框外 */
+      layoutProducts(getProdZone());
     }
   }
 
@@ -1726,132 +2265,3 @@ function _applyCompose(rawPreset) {
 
 })();
 
-/**
- * 根據人物數量與商品數量
- * 自動套用最接近的構圖
- */
-function autoApplyCompose() {
-
-  if (
-    !window.COMPOSE_PRESETS ||
-    !Array.isArray(window.COMPOSE_PRESETS)
-  ) {
-    return;
-  }
-
-  var personCount = document.querySelectorAll('.bn-person-box').length;
-  var prodCount   = document.querySelectorAll('.bn-prod-box').length;
-
-  personCount = Math.min(personCount, 2);
-  prodCount   = Math.min(prodCount, 3);
-
-  var targetPreset = null;
-
-  COMPOSE_PRESETS.forEach(function(preset){
-
-    var pCount =
-      (preset.persons && preset.persons.length) || 0;
-
-    var prodLen =
-      (preset.prods && preset.prods.length) || 0;
-
-    if (
-      pCount === personCount &&
-      prodLen === prodCount
-    ) {
-      targetPreset = preset;
-    }
-
-  });
-
-  if (targetPreset) {
-    _applyCompose(targetPreset);
-  }
-}
-function autoArrangeProducts() {
-
-  var pzone = getProductZone();
-
-  if (!pzone) return;
-
-  var boxes =
-    Array.from(
-      pzone.querySelectorAll('.bn-prod-box')
-    );
-
-  if (!boxes.length) return;
-
-  var layouts = {
-
-    1: [
-      {x:50,y:60}
-    ],
-
-    2: [
-      {x:35,y:60},
-      {x:65,y:60}
-    ],
-
-    3: [
-      {x:50,y:35},
-      {x:30,y:72},
-      {x:70,y:72}
-    ]
-
-  };
-
-  var positions =
-    layouts[
-      Math.min(boxes.length,3)
-    ];
-
-  boxes.forEach(function(box, idx){
-
-    var pos = positions[idx];
-
-    if (!pos) return;
-
-    document.documentElement.style.setProperty(
-      '--bn-prod-'+idx+'-x',
-      pos.x+'%'
-    );
-
-    document.documentElement.style.setProperty(
-      '--bn-prod-'+idx+'-y',
-      pos.y+'%'
-    );
-
-  });
-
-  layoutProducts(pzone);
-}
-function autoScaleProducts() {
-
-  var pzone = getProductZone();
-
-  if (!pzone) return;
-
-  var boxes =
-    pzone.querySelectorAll('.bn-prod-box');
-
-  var count = boxes.length;
-
-  var scale = 1;
-
-  if (count === 2) {
-
-    scale = 0.85;
-
-  } else if (count >= 3) {
-
-    scale = 0.72;
-
-  }
-
-  boxes.forEach(function(box){
-
-    box.dataset.sizeScale = scale;
-
-  });
-
-}

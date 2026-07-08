@@ -740,6 +740,9 @@
         '      <div class="bn-preview-grid" id="bn-mpgrid"></div>',
         '      <div id="bn-mno" style="text-align:center;color:#666666;font-size:12px;padding:8px">尚未選取圖片</div>',
         '      <div class="bn-limit-msg" id="bn-mlimit"></div>',
+        '      <div style="text-align:center;margin:8px 0 2px">',
+        '        <button id="bn-polaroid-btn" style="padding:8px 16px;border-radius:8px;border:1px solid #444;background:#2a2a2a;color:#ddd;cursor:pointer;font-size:13px">🖼️ 拍立得構圖</button>',
+        '      </div>',
         '    </div>',
         '    <div id="bn-sc2" style="display:none">',
         '      <div style="font-size:12px;color:#ee4d2d;background:rgba(74,144,226,.08);border:1px solid rgba(238,77,45,.2);border-radius:10px;padding:8px 12px;margin-bottom:14px;line-height:1.8">',
@@ -782,10 +785,25 @@
       mdrop.addEventListener('dragleave',function(){this.classList.remove('over');});
       mdrop.addEventListener('drop',function(e){e.preventDefault();this.classList.remove('over');handleFiles(Array.from(e.dataTransfer.files));});
       mfinp.addEventListener('change',function(){handleFiles(Array.from(this.files));this.value='';});
+
+      /* 拍立得構圖：開產生器 → 產出當一張普通商品圖塞進 staged，續走既有流程
+         ★ 必須綁在 buildModal() 內部，此時按鈕 DOM 才存在（否則抓到 null，監聽掛不上）*/
+      var pbtn=document.getElementById('bn-polaroid-btn');
+      if(pbtn){
+        pbtn.addEventListener('click',function(){
+          if(!window.bnPolaroid||typeof window.bnPolaroid.open!=='function'){alert('拍立得外掛尚未載入');return;}
+          if(staged.length>=MAX_PROD){alert('已達 '+MAX_PROD+' 張上限，請先移除一張');return;}
+          window.bnPolaroid.open(function(res){
+            if(staged.length>=MAX_PROD)return;
+            staged.push({src:res.flatSrc,name:'拍立得',ratio:res.ratio,_polaroid:res.recipe});
+            renderPreview();updateLimit();
+          });
+        });
+      }
     }
 
     function openModal(){
-      staged=window._bnProducts.map(function(p){return{src:p.src,name:p.name,ratio:p.ratio,fromExisting:true,id:p.id};});
+      staged=window._bnProducts.map(function(p){return{src:p.src,name:p.name,ratio:p.ratio,fromExisting:true,id:p.id,_polaroid:p._polaroid};});
       heroIdx=0; rankOrder=null; currentStep=1;
       renderPreview(); updateLimit(); showStep(1);
       modal.classList.add('show');
@@ -941,7 +959,9 @@
         /* 預設 z 堆疊：主品（i=0）在後，配品（i=1+）依序往前。
            zOrder 越小 = z-index 越高（越靠前），故主品得到最大的 zOrder 值 */
         var zOrder = orderedItems.length - 1 - i;
-        window._bnProducts.push({id:id,src:src,ratio:item.ratio||1,name:item.name,sizeScale:sizeScale,position:pos,zOrder:zOrder});
+        var _prod={id:id,src:src,ratio:item.ratio||1,name:item.name,sizeScale:sizeScale,position:pos,zOrder:zOrder};
+        if(item._polaroid)_prod._polaroid=item._polaroid; /* 拍立得配方隨商品保存，供 undo/暫存/重編 */
+        window._bnProducts.push(_prod);
         broadcast({type:'bn-product-add',id:id,src:src,ratio:item.ratio||1,name:item.name,index:i,sizeScale:sizeScale,position:pos});
         if(!item.fromExisting) newIds.push(id);
         await new Promise(function(r){setTimeout(r,50);});
@@ -1051,11 +1071,27 @@
         infoWrap.appendChild(name);
         infoWrap.appendChild(posLabel);
 
-        var editBtn=document.createElement('button');editBtn.textContent='編輯';
-        editBtn.title='裁切・去背・擦除・影子';
-        editBtn.addEventListener('click',(function(pid){return function(){
-          openProductEditor(pid);
-        };})(p.id));
+        var editBtn=document.createElement('button');
+        if(p._polaroid){
+          /* 拍立得商品：不給去背編輯器（PM 指定），改為重開產生器就地重編 */
+          editBtn.textContent='重拍';editBtn.title='重新編輯拍立得構圖';
+          editBtn.addEventListener('click',(function(pid){return function(){
+            if(!window.bnPolaroid)return;
+            var pp=window._bnProducts.find(function(x){return x.id===pid;});
+            if(!pp)return;
+            window.bnPolaroid.open(function(res){
+              saveHistory();
+              pp.src=res.flatSrc;pp.ratio=res.ratio;pp._polaroid=res.recipe;
+              renderProdList();
+              broadcast({type:'bn-product-update',id:pp.id,src:pp.src,ratio:pp.ratio});
+            },pp._polaroid);
+          };})(p.id));
+        }else{
+          editBtn.textContent='編輯';editBtn.title='裁切・去背・擦除・影子';
+          editBtn.addEventListener('click',(function(pid){return function(){
+            openProductEditor(pid);
+          };})(p.id));
+        }
 
         /* 影子按鈕：有陰影→點擊移除，無陰影→點擊生成 */
         var shadowBtn=document.createElement('button');
@@ -1563,8 +1599,22 @@
         } else if(window._bnLogoDataUrl){
           broadcastTo(id,{type:'bn-logo',dataUrl:window._bnLogoDataUrl});
         }
-        /* 先送 product-add，再送 zorder */
-        window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0});});
+        /* 先送 product-add，再送 zorder
+           ★ 關鍵修正：這裡原本沒有帶 userMoved/百分比座標，導致「使用者
+           手動調整過位置」的商品，在這個新 iframe 就緒時，會被這條路徑
+           用預設位置重新覆蓋回去——而且是在 _bnRebroadcastProducts()
+           正確定位「之後」才觸發（因為要等這個特定 iframe 自己回報
+           bn-iframe-ready，時間點通常比整批重播還晚），所以看起來就像
+           「暫存還原後怎麼調都調不回來、永遠是預設位置」。
+           修法：跟 _bnRebroadcastProducts() 用同一套規則——只有
+           p.userMoved 為真時才附上百分比座標，讓 layout-runtime.js
+           收到後用 applyManualProductPositions() 覆寫回正確位置。*/
+        window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0,
+          userMoved: !!p.userMoved,
+          leftPct: p.userMoved ? p.leftPct : undefined,
+          topPct: p.userMoved ? p.topPct : undefined,
+          widthPct: p.userMoved ? p.widthPct : undefined,
+          heightPct: p.userMoved ? p.heightPct : undefined});});
         /* ★ 修正：人物圖已升級為多人物陣列 _bnPersons，原本單數 _bnPerson 永遠是 undefined，
            會導致新建立的 iframe（新增版位 / 重新整理）收不到目前已上傳的人物圖。
            改為比照商品圖邏輯，整批送出 bn-persons（layout-runtime.js 已支援此事件型別）*/
@@ -1621,8 +1671,18 @@
       wbKnob.style.background = on ? '#fff' : 'var(--text3,#666666)';
     };
 
-    window._bnBroadcastPerson = function(){ 
-      broadcast({type:'bn-persons', persons:window._bnPersons}); 
+    window._bnBroadcastPerson = function(){
+      /* ★ 同商品邏輯：只把「使用者手動拖移/縮放過」的人物百分比座標帶過去，
+         沒被動過的人物繼續讓 layout-runtime.js 用 config.css 的預設 slot 排版 */
+      var persons = (window._bnPersons||[]).map(function(p){
+        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved };
+        if (p.userMoved) {
+          out.leftPct = p.leftPct; out.topPct = p.topPct;
+          out.widthPct = p.widthPct; out.heightPct = p.heightPct;
+        }
+        return out;
+      });
+      broadcast({type:'bn-persons', persons:persons});
     };
 
     window._bnRebroadcastProducts = function(){
@@ -1633,9 +1693,17 @@
       });
       setTimeout(function(){
         reordered.forEach(function(p, idx){
+          /* ★ 只有使用者真的手動拖移/縮放過（userMoved）才把百分比座標一起帶過去，
+             讓 layout-runtime.js 用「相對於當下畫布尺寸」還原位置，
+             不然沒被動過的商品會被強制鎖死座標，反而失去自適應排版能力 */
           broadcast({type:'bn-product-add', id:p.id, src:p.src, ratio:p.ratio,
             name:p.name, index:idx, sizeScale:p.sizeScale||1,
-            position:p.position||0, zOrder:p.zOrder||0});
+            position:p.position||0, zOrder:p.zOrder||0,
+            userMoved: !!p.userMoved,
+            leftPct: p.userMoved ? p.leftPct : undefined,
+            topPct: p.userMoved ? p.topPct : undefined,
+            widthPct: p.userMoved ? p.widthPct : undefined,
+            heightPct: p.userMoved ? p.heightPct : undefined});
         });
         /* z-index */
         var order = (window._bnProducts||[]).slice().sort(function(a,b){

@@ -396,6 +396,10 @@
       file.arrayBuffer().then(function(buf) {
         var wb = global.XLSX.read(buf, { type:'array', cellDates:true, raw:false });
         global._woWorkbook = wb;
+        /* 記住檔名，供下載暫存時一併保存（工單本身的 xlsx 二進位內容不存進 JSON，
+           只留檔名+sheet 名稱作為「這份暫存對應哪張工單」的追溯資訊；
+           真正的畫面效果已經反映在文字欄位/色碼上，重新開檔不需要重新解析 xlsx） */
+        global._bnWorkorderMeta = { fileName: file.name, sheetName: '' };
 
         /* 填入 Sheet 選單 */
         var sel = document.getElementById('wo-sheet-sel');
@@ -452,6 +456,10 @@
       return;
     }
 
+    /* 記住目前套用的 sheet 名稱（配合 handleWoFile 記下的檔名，組成完整追溯資訊） */
+    if (!global._bnWorkorderMeta) global._bnWorkorderMeta = { fileName:'', sheetName:'' };
+    global._bnWorkorderMeta.sheetName = sheetName;
+
     /* 填入 bn.html 工具列的各個輸入框 */
     var fields = [
       { id:'txt-main',  val: wo.headline },
@@ -499,6 +507,26 @@
      2. 本機暫存
   ══════════════════════════════════════ */
   function collectState(){
+    /* ★ 優先使用 bn.html 對外開放的完整快照（涵蓋所有 input、購物專家、
+       人物陣列、商品陣列、構圖預設、Logo 白底旗標……），不再自己維護
+       一份會漏欄位的簡化版本。只有在極端狀況下（bn.html 尚未載入該函式，
+       例如舊版頁面或載入順序異常）才退回舊版陽春快照，確保不會整包壞掉。 */
+    var full = (typeof global._bnCaptureFullState === 'function')
+      ? global._bnCaptureFullState()
+      : null;
+
+    if (full) {
+      return {
+        version: 2,
+        ts: Date.now(),
+        full: full,
+        workorderMeta: global._bnWorkorderMeta || null,
+        checked: global.loadChecked ? global.loadChecked() : {},
+      };
+    }
+
+    /* 退回舊版（version 1）快照：僅在 _bnCaptureFullState 不存在時使用 */
+    console.warn('[BNState] _bnCaptureFullState 未就緒，退回舊版簡化快照（可能遺漏欄位）');
     return {
       version: 1,
       ts: Date.now(),
@@ -507,10 +535,15 @@
         main: (document.getElementById('txt-main') ||{}).value||'',
         sub:  (document.getElementById('txt-sub')  ||{}).value||'',
         date: (document.getElementById('txt-date') ||{}).value||'',
+        host: (document.getElementById('txt-host') ||{}).value||'',
       },
       colors: global.colorState ? JSON.parse(JSON.stringify(global.colorState)) : {},
       logos: (global._bnLogos||[]).map(function(l){ return {id:l.id,src:l.src,round:l.round||false}; }),
       products:(global._bnProducts||[]).map(function(p){
+        return {id:p.id,src:p.src,ratio:p.ratio,name:p.name,
+          sizeScale:p.sizeScale||1,position:p.position||0,zOrder:p.zOrder||0};
+      }),
+      persons:(global._bnPersons||[]).map(function(p){
         return {id:p.id,src:p.src,ratio:p.ratio,name:p.name,
           sizeScale:p.sizeScale||1,position:p.position||0,zOrder:p.zOrder||0};
       }),
@@ -519,34 +552,85 @@
   }
 
   function applyState(state){
-    if(!state||state.version!==1) return;
-    if(state.texts){
-      ['brand','main','sub','date'].forEach(function(k){
-        var el=document.getElementById('txt-'+k);
-        if(el&&state.texts[k]!==undefined){ el.value=state.texts[k]; el.dispatchEvent(new Event('input',{bubbles:true})); }
-      });
+    if(!state) return;
+
+    /* version 2：完整快照，交還給 bn.html 的還原函式處理
+       （帶 rebroadcastRetry：因為上傳暫存時 iframe 可能還沒 ready，
+       需要延遲重播構圖/素材，詳見 bn.html 內的註記） */
+    if (state.version === 2 && state.full) {
+      /* ★ 關鍵順序修正：「哪些版位有勾選、要顯示預覽」必須最先還原。
+         如果使用者是「剛整理完頁面（一個版位都沒勾）就上傳暫存」，
+         這時畫面上根本沒有任何 iframe 存在，構圖/商品/人物的廣播
+         等於全部丟進真空——即使後面有重試機制，也是先前這裡的
+         勾選狀態要等到廣播「之後」才還原，等於本末倒置，重試也救不回來。
+         先勾選、把預覽 iframe 生出來，構圖廣播才有東西可以接收。 */
+      if (state.checked && typeof global.saveChecked === 'function') {
+        global.saveChecked(state.checked);
+        if (typeof global.renderChecks === 'function') global.renderChecks();
+        if (typeof global.renderPreviews === 'function') global.renderPreviews();
+      }
+
+      if (typeof global._bnRestoreFullState === 'function') {
+        global._bnRestoreFullState(state.full, { rebroadcastRetry: true });
+      } else {
+        console.warn('[BNState] _bnRestoreFullState 未就緒，無法還原完整快照');
+      }
+      if (state.workorderMeta) {
+        global._bnWorkorderMeta = state.workorderMeta;
+        /* 僅還原顯示用的追溯資訊，不重新解析 xlsx（原始檔案內容本來就沒存進 JSON） */
+        var zone = document.getElementById('wo-drop-zone');
+        if (zone && state.workorderMeta.fileName) {
+          var metaLine = '📎 ' + state.workorderMeta.fileName +
+            (state.workorderMeta.sheetName ? '（' + state.workorderMeta.sheetName + '）' : '') +
+            ' — 由暫存還原，如需重新比對禁用語請重新上傳';
+          var status = document.getElementById('wo-status');
+          if (status) status.textContent = metaLine;
+        }
+      }
+      return;
     }
-    if(state.colors&&global.colorState){
-      Object.assign(global.colorState,state.colors);
-      if(typeof global.renderColorPickers==='function') global.renderColorPickers();
-      if(typeof global.broadcastColors==='function') global.broadcastColors();
+
+    /* version 1：舊版簡化快照相容處理（例如使用者上傳的是更早期下載的暫存檔） */
+    if (state.version === 1) {
+      if(state.texts){
+        ['brand','main','sub','date','host'].forEach(function(k){
+          var el=document.getElementById('txt-'+k);
+          if(el&&state.texts[k]!==undefined){ el.value=state.texts[k]; el.dispatchEvent(new Event('input',{bubbles:true})); }
+        });
+      }
+      if(state.colors&&global.colorState){
+        Object.assign(global.colorState,state.colors);
+        if(typeof global.renderColorPickers==='function') global.renderColorPickers();
+        if(typeof global.broadcastColors==='function') global.broadcastColors();
+      }
+      if(state.logos&&Array.isArray(state.logos)){
+        global._bnLogos=state.logos;
+        global._bnLogoDataUrl=state.logos.length?state.logos[0].src:null;
+        if(typeof global._bnRenderLogoList==='function') global._bnRenderLogoList();
+        if(typeof global._bnBroadcastLogos==='function') global._bnBroadcastLogos();
+      }
+      if(state.products&&Array.isArray(state.products)){
+        global._bnProducts=state.products;
+        if(typeof global._bnRenderProdList==='function') global._bnRenderProdList();
+        if(typeof global._bnRebroadcastProducts==='function') global._bnRebroadcastProducts();
+      }
+      /* ★ 舊版曾經整個漏存人物陣列；如果剛好讀到的舊檔案沒有 persons 欄位，
+         這裡就是 undefined，直接跳過不動現有人物，而不是清空畫面 */
+      if(state.persons&&Array.isArray(state.persons)){
+        global._bnPersons=state.persons;
+        if(typeof global._bnRenderPersonList==='function') global._bnRenderPersonList();
+        if(typeof global._bnBroadcastPerson==='function') global._bnBroadcastPerson();
+      }
+      if(state.checked&&typeof global.saveChecked==='function'){
+        global.saveChecked(state.checked);
+        if(typeof global.renderChecks==='function') global.renderChecks();
+        if(typeof global.renderPreviews==='function') global.renderPreviews();
+      }
+      showToast('已還原舊版暫存檔（構圖預設在舊版未保存，如版面跑掉請手動重新選擇構圖）','ok',4000);
+      return;
     }
-    if(state.logos&&Array.isArray(state.logos)){
-      global._bnLogos=state.logos;
-      global._bnLogoDataUrl=state.logos.length?state.logos[0].src:null;
-      if(typeof global._bnRenderLogoList==='function') global._bnRenderLogoList();
-      if(typeof global._bnBroadcastLogos==='function') global._bnBroadcastLogos();
-    }
-    if(state.products&&Array.isArray(state.products)){
-      global._bnProducts=state.products;
-      if(typeof global._bnRenderProdList==='function') global._bnRenderProdList();
-      if(typeof global._bnRebroadcastProducts==='function') global._bnRebroadcastProducts();
-    }
-    if(state.checked&&typeof global.saveChecked==='function'){
-      global.saveChecked(state.checked);
-      if(typeof global.renderChecks==='function') global.renderChecks();
-      if(typeof global.renderPreviews==='function') global.renderPreviews();
-    }
+
+    console.warn('[BNState] 無法辨識的暫存格式', state);
   }
 
   function autoSave(){
@@ -602,7 +686,19 @@
         try{
           applyState(JSON.parse(e.target.result));
           showToast('暫存已載入','ok');
-        }catch(_){ showToast('暫存格式錯誤','err'); }
+        }catch(err){
+          /* ★ 不能再靜默吞掉例外：之前這裡是 catch(_){}，
+             applyState() 內部若拋出任何錯誤（例如某個外掛還沒載入完成、
+             資料格式跟預期不符），使用者只會看到「暫存格式錯誤」這句
+             籠統訊息，畫面上什麼變化都沒有，完全無法判斷問題出在哪。
+             印出真正的錯誤訊息到 console，才有辦法回頭排查。 */
+          console.error('[BNState] 上傳暫存還原失敗：', err);
+          showToast('暫存還原失敗：' + (err && err.message ? err.message : '未知錯誤') + '（詳情請查看瀏覽器主控台）','err',5000);
+        }
+      };
+      reader.onerror=function(){
+        console.error('[BNState] 讀取暫存檔案失敗', reader.error);
+        showToast('讀取檔案失敗，請確認檔案未損毀','err');
       };
       reader.readAsText(file);
       ulInp.value='';

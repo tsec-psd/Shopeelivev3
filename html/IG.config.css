@@ -76,10 +76,6 @@
      bw = 最大寬度（商品範圍寬度 %）← Contain 模式：寬型商品不爆版
      不需要商品圖 Slot → 刪除以下全部（改用底部自動排列）
   ─────────────────────────────────────────────── */
-  --bn-prod-0-x: 78%;  --bn-prod-0-y: 52%;  --bn-prod-0-h: 74%;  --bn-prod-0-bw: 54%;
-  --bn-prod-1-x: 54%;  --bn-prod-1-y: 38%;  --bn-prod-1-h: 50%;  --bn-prod-1-bw: 32%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;  --bn-prod-2-bw: 22%;
-  --bn-prod-2-x: 68%;  --bn-prod-2-y: 28%;  --bn-prod-2-h: 32%;
 
   /* 陰影形狀調整（只影響 IG，其他版位不受影響）*/
   --shadow-grad-from: 35;   /* 陰影可見範圍左邊界 */
@@ -218,4 +214,16 @@
 /* 廠商 / 蝦導播 LOGO 容器：覆寫 IG.css 的 opacity: 0.51 */
 .廠商LOGO範圍  { opacity: 1 !important; }
 .蝦導播LOGO範圍 { opacity: 1 !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   SBD 構圖模式 — 裁切窗口座標 + 整張裝飾覆蓋圖
+   ★★★ 座標為暫定示意值，非 PS 量測真實數字，正式上線前務必核對 ★★★
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --bn-sbd-window-x: 215.66px;
+  --bn-sbd-window-y: 819.44px;
+  --bn-sbd-window-w: 576.89px;
+  --bn-sbd-window-h: 481.35px;
+  --bn-sbd-overlay: "SBD_白框_IG.png";
+}
 
