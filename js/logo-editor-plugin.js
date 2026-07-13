@@ -31,12 +31,62 @@
     document.head.appendChild(s);
   }
 
-  /* ── 注入 CSS ── */
+  /* ── 注入 CSS ──
+   * 【Bug 修復說明】原本用單一 textContent 字串內夾帶字面上的
+   * <style>...</style> 標籤文字，textContent 不會被當 HTML 解析，
+   * 導致 CSS parser 把 "<" ">" 視為非法字元，整條規則（含
+   * .cropper-modal-wrap 的 position:fixed 規則）被直接丟棄，
+   * 造成 Modal 失去彈窗定位、退化成一般 block 元素沉到頁尾。
+   * 修法：拆成兩個獨立 <style> 元素，內容只放「純 CSS」，
+   * 不再夾帶任何 <style> 標籤文字。
+   */
   function injectCSS(){
+    injectMenuCSS();
+    injectCropperCSS();
+  }
+
+  function injectMenuCSS(){
     if(document.getElementById('_bn_lm_css')) return;
     var s = document.createElement('style');
     s.id = '_bn_lm_css';
-    s.textContent = "<style id=\"jimmy-new-logo-menu-only-style\">\n.logo-edit-btn,\n.logo-swap-btn,\n.logo-delete-btn,\n.logo-white-btn,\n.logo-main-pen-btn,\n.logo-action-menu{\n  display:none !important;\n}\n\n.logo-v14-trigger{\n  position:absolute !important;\n  top:-24px !important;\n  right:-2px !important;\n  width:20px !important;\n  height:20px !important;\n  border-radius:50% !important;\n  background:#000 !important;\n  color:#fff !important;\n  display:flex !important;\n  align-items:center !important;\n  justify-content:center !important;\n  cursor:pointer !important;\n  z-index:2147483645 !important;\n  font-size:12px !important;\n  line-height:1 !important;\n  user-select:none !important;\n  box-shadow:0 2px 6px rgba(0,0,0,.25);\n}\n.logo-item,\n#square .brand{ overflow:visible !important; }\n\n#logoMenuV14{\n  position:fixed !important;\n  min-width:118px !important;\n  background:#111 !important;\n  color:#fff !important;\n  border-radius:10px !important;\n  box-shadow:0 8px 24px rgba(0,0,0,.28) !important;\n  padding:6px 0 !important;\n  display:none !important;\n  z-index:2147483647 !important;\n}\n#logoMenuV14.show{ display:block !important; }\n#logoMenuV14 button{\n  width:100% !important;\n  border:0 !important;\n  background:transparent !important;\n  color:#fff !important;\n  text-align:left !important;\n  padding:7px 12px !important;\n  font-size:12px !important;\n  line-height:1.35 !important;\n  cursor:pointer !important;\n}\n#logoMenuV14 button:hover{ background:#2b2b2b !important; }\n#logoMenuV14 button[hidden]{ display:none !important; }\n\n.is-exporting .logo-v14-trigger,\n.is-exporting #logoMenuV14{ display:none !important; }\n\n#logoCropModal{ z-index:2147483646 !important; }\n</style>\n\n\n<style id=\"logo-cropper-modal-style\">\n  .cropper-modal-wrap{\n    position:fixed; inset:0; background:rgba(0,0,0,.5);\n    display:none; align-items:center; justify-content:center; z-index:10020;\n  }\n  .cropper-modal-wrap.open{ display:flex; }\n  .cropper-panel{\n    width:min(90vw, 900px); background:#fff; border-radius:12px; overflow:hidden;\n    display:flex; flex-direction:column;\n  }\n  .cropper-panel header{\n    display:flex; align-items:center; justify-content:space-between;\n    padding:10px 14px; margin:0;\n  }\n  .cropper-panel .body{ padding:10px; }\n  .cropper-panel .actions{ display:flex; gap:8px; padding:10px; justify-content:flex-end; }\n  .cropper-panel img{ max-width:100%; max-height:65vh; display:block; margin:0 auto; }\n";
+    s.textContent =
+      '.logo-edit-btn,\n.logo-swap-btn,\n.logo-delete-btn,\n.logo-white-btn,\n.logo-main-pen-btn,\n.logo-action-menu{\n  display:none !important;\n}\n' +
+      '.logo-v14-trigger{\n  position:absolute !important;\n  top:-24px !important;\n  right:-2px !important;\n  width:20px !important;\n  height:20px !important;\n  border-radius:50% !important;\n  background:#000 !important;\n  color:#fff !important;\n  display:flex !important;\n  align-items:center !important;\n  justify-content:center !important;\n  cursor:pointer !important;\n  z-index:2147483645 !important;\n  font-size:12px !important;\n  line-height:1 !important;\n  user-select:none !important;\n  box-shadow:0 2px 6px rgba(0,0,0,.25);\n}\n' +
+      '.logo-item,\n#square .brand{ overflow:visible !important; }\n' +
+      '#logoMenuV14{\n  position:fixed !important;\n  min-width:118px !important;\n  background:#111 !important;\n  color:#fff !important;\n  border-radius:10px !important;\n  box-shadow:0 8px 24px rgba(0,0,0,.28) !important;\n  padding:6px 0 !important;\n  display:none !important;\n  z-index:2147483647 !important;\n}\n' +
+      '#logoMenuV14.show{ display:block !important; }\n' +
+      '#logoMenuV14 button{\n  width:100% !important;\n  border:0 !important;\n  background:transparent !important;\n  color:#fff !important;\n  text-align:left !important;\n  padding:7px 12px !important;\n  font-size:12px !important;\n  line-height:1.35 !important;\n  cursor:pointer !important;\n}\n' +
+      '#logoMenuV14 button:hover{ background:#2b2b2b !important; }\n' +
+      '#logoMenuV14 button[hidden]{ display:none !important; }\n' +
+      '.is-exporting .logo-v14-trigger,\n.is-exporting #logoMenuV14{ display:none !important; }\n' +
+      '#logoCropModal{ z-index:2147483646 !important; }';
+    document.head.appendChild(s);
+  }
+
+  function injectCropperCSS(){
+    if(document.getElementById('_bn_lm_cropper_css')) return;
+    var s = document.createElement('style');
+    s.id = '_bn_lm_cropper_css';
+    /* 這段是修好裁切 Modal 定位的關鍵：position:fixed + inset:0
+       務必確保這裡是「純 CSS」，不能再夾帶任何字面 <style> 標籤文字 */
+    s.textContent =
+      '.cropper-modal-wrap{\n' +
+      '  position:fixed !important; inset:0 !important; background:rgba(0,0,0,.5) !important;\n' +
+      '  display:none !important; align-items:center !important; justify-content:center !important;\n' +
+      '  z-index:10020 !important;\n' +
+      '}\n' +
+      '.cropper-modal-wrap.open{ display:flex !important; }\n' +
+      '.cropper-panel{\n' +
+      '  width:min(90vw, 900px); background:#fff; border-radius:12px; overflow:hidden;\n' +
+      '  display:flex; flex-direction:column;\n' +
+      '}\n' +
+      '.cropper-panel header{\n' +
+      '  display:flex; align-items:center; justify-content:space-between;\n' +
+      '  padding:10px 14px; margin:0;\n' +
+      '}\n' +
+      '.cropper-panel .body{ padding:10px; }\n' +
+      '.cropper-panel .actions{ display:flex; gap:8px; padding:10px; justify-content:flex-end; }\n' +
+      '.cropper-panel img{ max-width:100%; max-height:65vh; display:block; margin:0 auto; }';
     document.head.appendChild(s);
   }
 

@@ -31,7 +31,7 @@
         "1人1品": { persons: [{ x:0, bottom:0, h:80  }], prods: [{ x:71, y:48, h:61, bw:50, z:10}] }
       },
       sbd: {
-        "1人2品": { persons: [{ x:0, bottom:0, h:70 }], prods: [{ x:60, y:30, h:50, bw:44, z:10 }, { x:85, y:60, h:45, bw:26, z:14 }] },
+        "1人2品": { persons: [{  x:0, bottom:0, h:82 }], prods: [{ x:60, y:30, h:50, bw:44, z:10 }, { x:85, y:60, h:45, bw:26, z:14 }] },
         "2人": { persons: [{ x:20, bottom:0, h:95 }, { x:42, bottom:0, h:95 }], prods: [] },
         "2人2品": { persons: [{ x:0, bottom:-20, h:90 }, { x:25, bottom:-20, h:90 }], prods: [{ x:65, y:30, h:30, bw:44, z:10 }, { x:88, y:50, h:25, bw:26, z:14 }] },
         "1人1品": { persons: [{ x:0, bottom:-5, h:76 }], prods: [{ x:72, y:48, h:61, bw:50, z:10 }] }

@@ -962,7 +962,7 @@
         var _prod={id:id,src:src,ratio:item.ratio||1,name:item.name,sizeScale:sizeScale,position:pos,zOrder:zOrder};
         if(item._polaroid)_prod._polaroid=item._polaroid; /* 拍立得配方隨商品保存，供 undo/暫存/重編 */
         window._bnProducts.push(_prod);
-        broadcast({type:'bn-product-add',id:id,src:src,ratio:item.ratio||1,name:item.name,index:i,sizeScale:sizeScale,position:pos});
+        broadcast({type:'bn-product-add',id:id,src:src,ratio:item.ratio||1,name:item.name,index:i,sizeScale:sizeScale,position:pos,rot:_prod.rot||0});
         if(!item.fromExisting) newIds.push(id);
         await new Promise(function(r){setTimeout(r,50);});
       }
@@ -1217,7 +1217,7 @@
             broadcast({type:'bn-product-remove',id:p.id});
             setTimeout(function(){
               var idx=window._bnProducts.indexOf(p);
-              broadcast({type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale||1,position:p.position||0});
+              broadcast({type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale||1,position:p.position||0,rot:p.rot||0});
               if (typeof saveHistory === 'function') saveHistory();
             },50);
           };
@@ -1609,7 +1609,7 @@
            修法：跟 _bnRebroadcastProducts() 用同一套規則——只有
            p.userMoved 為真時才附上百分比座標，讓 layout-runtime.js
            收到後用 applyManualProductPositions() 覆寫回正確位置。*/
-        window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0,
+        window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0,rot:p.rot||0,
           userMoved: !!p.userMoved,
           leftPct: p.userMoved ? p.leftPct : undefined,
           topPct: p.userMoved ? p.topPct : undefined,
@@ -1675,7 +1675,7 @@
       /* ★ 同商品邏輯：只把「使用者手動拖移/縮放過」的人物百分比座標帶過去，
          沒被動過的人物繼續讓 layout-runtime.js 用 config.css 的預設 slot 排版 */
       var persons = (window._bnPersons||[]).map(function(p){
-        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved };
+        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved, rot: p.rot||0 };
         if (p.userMoved) {
           out.leftPct = p.leftPct; out.topPct = p.topPct;
           out.widthPct = p.widthPct; out.heightPct = p.heightPct;
@@ -1698,7 +1698,7 @@
              不然沒被動過的商品會被強制鎖死座標，反而失去自適應排版能力 */
           broadcast({type:'bn-product-add', id:p.id, src:p.src, ratio:p.ratio,
             name:p.name, index:idx, sizeScale:p.sizeScale||1,
-            position:p.position||0, zOrder:p.zOrder||0,
+            position:p.position||0, zOrder:p.zOrder||0, rot:p.rot||0,
             userMoved: !!p.userMoved,
             leftPct: p.userMoved ? p.leftPct : undefined,
             topPct: p.userMoved ? p.topPct : undefined,

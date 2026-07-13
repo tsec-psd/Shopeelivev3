@@ -12,10 +12,13 @@
   --bg-img: ;
 
   /* ── 圖層清單 ──
-     ★ 修正：移除「購物專家」（此版位無主持）
-     ★ bar範圍 保留供日後補 CSS 使用
+     ★ 購物專家：僅供 SBD 模式使用（公版無主持），顯示與否由檔案末端
+       body.sbd-mode 閘門控制；預設文字留空。
+     ★ bar範圍 同樣只在 SBD 顯示（見末端閘門）。
   */
-  --layers: "商品範圍|,bar範圍|,主標|主標,日期|5/31 21:00,副標|副標";
+  /* ★ 購物專家 加回清單，但預設文字留空（依需求：host 未填時 Bar 留白）；
+     實際顯示與否由檔案末端 SBD 閘門（body.sbd-mode）控制，公版不顯示。 */
+  --layers: "商品範圍|,bar範圍|,主標|主標,日期|5/31 21:00,副標|副標,購物專家|";
   --cta-classes: "";
 
   /* ── LOGO 設定 ── */
@@ -132,3 +135,56 @@
   --bn-sbd-prodzone-w: 440.68px;
   --bn-sbd-prodzone-h: 363.9px;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   購物專家 Bar — 僅限 SBD 模式（FB 公版無主持，不顯示）
+   ──────────────────────────────────────────────────────────────
+   閘門原理：layout-runtime.js 進 SBD 時會在 <body> 掛 .sbd-mode，
+   公版時移除。所以「預設隱藏 + body.sbd-mode 才顯示」即可精準做到
+   只在 SBD 出現。bar範圍 一併鎖住——否則配色器 bn-color-ext 會對
+   .bar範圍 潑漸層，公版下就會冒出一條色帶。
+   ══════════════════════════════════════════════════════════════ */
+/* ── bar範圍（底色條）──
+   ★ FB 的 PS CSS 沒有這個 class，所以 position/尺寸/背景都要在這裡補齊，
+     否則配色器要潑的漸層沒有可見的框可畫。
+   背景色最終會被配色器 bn-color-ext 換成漸層（左透明→右實色），
+   這裡給一個半透明底色當「配色尚未廣播前」的 fallback，比照直播大廳。 */
+.bar範圍 {
+  display: none;                         /* 預設隱藏，交給末端 body.sbd-mode 開啟 */
+  position: absolute;                    /* ★ 關鍵：FB PS CSS 沒給，一定要補 */
+  /* ↓↓↓ 尺寸/位置為「暫定示意值」，右下角比照直播大廳，等你 PS 導出後覆蓋 ↓↓↓ */
+  left: 473.53px;                           /* ★ 暫定：1200 寬畫布右半 */
+  top: 575.19px;                            /* ★ 暫定：630 高畫布近底 */
+  width: 726.7px;                          /* ★ 暫定 */
+  height: 54.92px;                          /* ★ 暫定 */
+  /* ↑↑↑ 待覆蓋 ↑↑↑ */
+  background-color: rgba(35, 85, 141, 0.8); /* fallback；配色器會覆蓋成漸層 */
+}
+
+/* ── 購物專家（Bar 上的文字）──
+   ★ 同樣：FB PS CSS 沒有這個 class，position/字級/字體/顏色都要在這裡補。
+     文字色是白色固定值（配色器 bn-color-ext 只重染 .bar範圍 及其子元素，
+     購物專家是 bar範圍 的兄弟節點、不會被重染，比照直播大廳）。 */
+.購物專家 {
+  display: none;                         /* 預設隱藏，交給末端 body.sbd-mode 開啟 */
+  position: absolute;                    /* ★ 關鍵：FB PS CSS 沒給，一定要補（否則會飄到左上角） */
+  /* ↓↓↓ 位置為「暫定示意值」，右下角比照直播大廳，等你 PS 導出後覆蓋 ↓↓↓ */
+  left: 917.952px !important;
+  right: 10px;                           /* ★ 暫定：右緣內縮 */
+  top: 586px;                            /* ★ 暫定：對齊 bar範圍 垂直置中 */
+  /* ↑↑↑ 待覆蓋 ↑↑↑ */
+  font-size: 32px;                       /* ★ 暫定字級（直播大廳用 PS matrix 縮放，這裡先給等效大小） */
+  font-family: "ShopeeNotoSans (content)";
+  color: #ffffff;
+  text-align: right;
+  line-height: 1;
+  white-space: nowrap;
+  transform-origin: 100% 0 !important;   /* 覆寫全域 0 0：從右上角縮放，長文案不往左位移、右緣永遠貼 right */
+  max-width: 620px;                      /* 防溢出：超長文案在框內截斷，不爆版、不蓋商品 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 6;
+}
+
+body.sbd-mode .bar範圍,
+body.sbd-mode .購物專家 { display: block; } /* 只有 SBD 才顯示這兩層 */

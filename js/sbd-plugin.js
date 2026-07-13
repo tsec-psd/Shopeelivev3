@@ -312,12 +312,30 @@
     broadcastToAll({ type: 'bn-layout-mode', mode: _sbdMode });
     updateKvSidePanelVisibility(); /* 切回公版模式：全部隱藏；切到SBD：已就緒的版位才顯示 */
 
-    /* 模式切換後，立刻重新套用上一次選擇的構圖，讓商品位置馬上改用
-       這個模式對應的座標（例如 preset.overrides['FB_POST_SBD']），
-       不用使用者手動再點一次構圖按鈕才會生效。
-       ★ postMessage 對同一個 iframe 保證依發送順序處理，所以這裡
-         緊接著 broadcastToAll(bn-layout-mode) 之後呼叫是安全的——
-         iframe 端一定會先處理完模式切換，才處理接下來的構圖套用。*/
+    /* ★ 進入 SBD：雙人構圖(2人 id2 / 2人2品 id3)不適用白框，若當前正選著它，
+       按鈕會被 renderComposePicker 隱藏，選取狀態就變孤兒、且畫面會擺出
+       白框內不該有的雙人座標。這裡自動改選「1人2品」(id1) 收斂回去。
+       依產品決定：切回公版「不還原」原本的雙人選擇（避免二次跳動）。
+       防呆：找不到 id1 時（理論上不會）不動作，維持原選取，不硬塞 null。 */
+    if (_sbdMode === 'sbd' && global._bnComposePreset &&
+        (global._bnComposePreset.id === 2 || global._bnComposePreset.id === 3)) {
+      var _presets = global.COMPOSE_PRESETS || [];
+      var _fallback = _presets.filter(function (p) { return p.id === 1; })[0];
+      if (_fallback) {
+        global._bnComposePreset     = _fallback;
+        global._bnSelectedComposeId = _fallback.id; /* 同步高亮，讓 renderComposePicker 重繪時橘框落在 1人2品 */
+      }
+    }
+
+    /* 重繪構圖選擇器：SBD 隱藏雙人、公版顯示全部（由 renderComposePicker 內判斷模式）。
+       防呆：頂層函式雖可經 window 取用，仍做 typeof 檢查，避免載入順序極端狀況報錯。 */
+    if (typeof global.renderComposePicker === 'function') global.renderComposePicker();
+
+    /* 模式切換後，立刻重新套用（可能已被收斂過的）構圖，讓商品位置馬上改用
+       這個模式對應的座標（例如 preset.overrides['FB_POST_SBD']）。
+       ★ postMessage 對同一個 iframe 保證依發送順序處理，緊接在
+         broadcastToAll(bn-layout-mode) 之後呼叫是安全的——iframe 端一定
+         會先處理完模式切換，才處理接下來的構圖套用。*/
     if (global._bnComposePreset && typeof global.applyComposeBroadcast === 'function') {
       global.applyComposeBroadcast(global._bnComposePreset);
     }

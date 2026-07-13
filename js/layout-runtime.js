@@ -29,6 +29,25 @@
   function init() {
     if (inited) return;
     inited = true;
+
+    /* ★ 鎖定「圖片類」元素不可被反藍/反灰：
+       拖曳商品/人物/LOGO 圖時，瀏覽器預設會觸發 ①文字選取(反藍)
+       ②原生圖片拖曳殘影 ③點擊灰底高亮(-webkit-tap-highlight)。
+       這裡「只列舉圖片 class」，刻意不碰文字圖層
+       (.主標/.副標/.日期/.購物專家)，保留選字→右鍵改色所需的反藍能力。
+       防呆：絕不下在 body/#canvas 全域，否則會連文字都不能選、
+       破壞改字色功能。重複注入以 id 擋掉。 */
+    if (!document.getElementById('bn-noselect-style')) {
+      var _nsSt = document.createElement('style');
+      _nsSt.id = 'bn-noselect-style';
+      _nsSt.textContent =
+        '.bn-prod-box,.bn-person-box,' +
+        '.bn-prod-box img,.bn-person-box img,.bn-logo-img{' +
+        'user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;' +
+        '-webkit-user-drag:none;-webkit-tap-highlight-color:transparent;}';
+      (document.head || document.documentElement).appendChild(_nsSt);
+    }
+
     var root = getComputedStyle(document.documentElement);
     var canvas = document.getElementById('canvas');
     var W = parseFloat(root.getPropertyValue('--canvas-w')) || parseFloat(document.body.dataset.fw) || 900;
@@ -155,6 +174,9 @@
       }
       function ac(cls,col){ if(!col)return; document.querySelectorAll('.'+cls).forEach(function(el){ if(!el.querySelector('.cta-text')) el.style.color=col; }); }
       ac('主標',c.mainText); ac('副標',c.subText); ac('日期',c.dateText); ac('品牌名',c.brandText);
+      /* 購物專家文字色（手動）：.購物專家 位於 .bar範圍 內、其子元素會被自動配色的 barText 上色，
+         故這裡連同子元素一起設定，確保手動選色當下一定生效 */
+      if(c.hostText){document.querySelectorAll('.購物專家').forEach(function(el){el.style.color=c.hostText;el.querySelectorAll('*').forEach(function(ch){ch.style.color=c.hostText;});});}
       document.querySelectorAll('.cta-text').forEach(function(el){ if(c.ctaText) el.style.color=c.ctaText; });
       document.querySelectorAll('.cta-arrow').forEach(function(el){ if(c.ctaText) el.style.borderLeftColor=c.ctaText; });
       /* CTA 底色：.逛逛去按鈕 / .cta底 / .逛逛去底 */
@@ -376,6 +398,7 @@
       box.dataset.id = e.data.id;
       box.dataset.ratio = e.data.ratio||1;
       box.dataset.sizeScale = e.data.sizeScale||1;
+      if (e.data.rot !== undefined) box.dataset.rot = e.data.rot; /* 旋轉持久化 */
       box.dataset.position  = e.data.position !== undefined ? e.data.position : e.data.index || 0;
       /* ★ 手動位置還原用：只有 userMoved 且百分比座標為有效數字時才記錄，
          其餘情況維持 undefined，讓下方 applyManualProductPositions() 略過、
@@ -699,6 +722,7 @@
         box.className     = 'bn-person-box bn-person-idx-' + index;
         box.dataset.id    = personData.id || ('person_' + index);  /* ★ ID，供 bn-person-zorder handler 定址 */
         box.dataset.ratio = String(ratio);          /* setupProdDrag 等比縮放用 */
+        if (personData.rot !== undefined) box.dataset.rot = personData.rot; /* 旋轉持久化 */
 
         /* ★ z-index：從 personData.zOrder 計算（zOrder=0 = 最前層）
            n = 總人物數；zOrder 最小 → z 最高（最前）
@@ -1618,6 +1642,7 @@
       }
       msg.userMoved = box.dataset.userMoved === '1';
       if (box.dataset.sizeScale !== undefined) msg.sizeScale = parseFloat(box.dataset.sizeScale) || 1;
+      msg.rot = parseFloat(box.dataset.rot) || 0; /* 旋轉持久化：位置變更時一併回報角度 */
       if (box.classList.contains('bn-person-box') && box.dataset.zOrder !== undefined) {
         msg.zOrder = parseInt(box.dataset.zOrder, 10);
       }
