@@ -1017,6 +1017,14 @@
         /* ★ 改呼叫 bn.html 共用的 applyComposeBroadcast()，不再自己重寫一份
            postMessage 迴圈 —— 這樣才能吃到「依版位方向送對應座標」的邏輯，
            否則這條自動配對路徑會繞過分方向機制，繼續對所有版位送同一份資料。 */
+        /* ★ 防呆提示：自動重排前若已有手動調整過的圖層，這次重排會「保留」它們
+           （由 layout-runtime 的 preserveManual 預設處理）。用非阻斷式 toast 告知
+           使用者這是刻意保留、不是排版壞掉；沒有手動圖層時不打擾。 */
+        var _preserved = (window._bnProducts || []).some(function(p){ return p.userMoved; }) ||
+                         (window._bnPersons  || []).some(function(p){ return p.userMoved; });
+        if (_preserved && typeof window._bnToast === 'function') {
+          window._bnToast('已保留你手動調整的圖層，新素材放入預設位置');
+        }
         if (typeof window.applyComposeBroadcast === 'function') {
           window.applyComposeBroadcast(bestPreset);
         } else {

@@ -414,11 +414,19 @@
             });
           wrap.style.display = '';
 
-          /* 若只有一張 Sheet，自動選取 */
-          if (wb.SheetNames.length === 1) {
-            sel.value = wb.SheetNames[0];
-            applyWorkorder(wb, wb.SheetNames[0],
-              document.getElementById('wo-status'));
+          /* ★ 預設自動載入第一個（有效）Sheet：避免多 Sheet 時使用者沒手動選 → 整份沒載入。
+             有效 Sheet＝名稱長度 >= 2（與上方下拉選單的 filter 一致）；
+             全被濾掉時退回原始第一個，確保一定有東西可載。 */
+          var _validSheets = wb.SheetNames.filter(function(n){ return n.length >= 2; });
+          var _firstSheet  = _validSheets[0] || wb.SheetNames[0];
+          if (_firstSheet) {
+            sel.value = _firstSheet;
+            /* 多個有效 Sheet → 用整合提示告知「已自動載入第一個、可於上方切換」；
+               只有一個時走 applyWorkorder 的預設 toast「工單已填入」。 */
+            var _hint = (_validSheets.length > 1)
+              ? ('此工單有 ' + _validSheets.length + ' 個 Sheet，已自動載入第一個「' + _firstSheet + '」，可於上方切換')
+              : null;
+            applyWorkorder(wb, _firstSheet, document.getElementById('wo-status'), _hint);
           }
         }
 
@@ -427,7 +435,7 @@
           zone.style.borderStyle = 'solid';
           zone.style.color = 'var(--accent2)';
           zone.innerHTML = '✅ ' + file.name +
-            '<br><span style="font-size:10px;color:var(--text3)">請選擇 Sheet</span>' +
+            '<br><span style="font-size:10px;color:var(--text3)">已自動載入第一個 Sheet，可於上方切換</span>' +
             '<input type="file" id="wo-file-input" accept=".xlsx,.xls" ' +
             'style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;">';
           /* 重新綁定 input */
@@ -449,7 +457,7 @@
     doRead();
   }
 
-  function applyWorkorder(wb, sheetName, statusEl) {
+  function applyWorkorder(wb, sheetName, statusEl, toastMsg) {
     var wo = parseWorkorderSheet(wb, sheetName);
     if (!wo) {
       if (statusEl) statusEl.textContent = '❌ 無法解析 Sheet：' + sheetName;
@@ -494,7 +502,9 @@
     if (wo.time)     summary.push('時間：' + wo.time);
     if (wo.host)     summary.push('主持人：' + wo.host.slice(0,8));
     if (statusEl) statusEl.textContent = '✅ 已填入 ' + summary.join('・');
-    showToast('工單已填入：' + sheetName, 'ok', 2200);
+    /* toastMsg：多 Sheet 自動載入第一個時，用整合提示取代預設 toast
+       （showToast 會堆疊在同一位置，故只留一則，避免兩則 toast 疊住） */
+    showToast(toastMsg || ('工單已填入：' + sheetName), 'ok', toastMsg ? 3600 : 2200);
   }
 
   function initBanwords(){

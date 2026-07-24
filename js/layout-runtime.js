@@ -25,50 +25,9 @@
   loadCSS(fname + '.config.css', onBothLoaded);
   window.addEventListener('load', function(){ setTimeout(init, 600); });
   var inited = false;
-  var _fontsReady = false;         /* 字體是否已就緒（或已逾時放行） */
-  var _fontLoadStarted = false;    /* 防止兩條 init 觸發路徑重複啟動字體載入 */
-
-  /* ── 字體預載（鐵律）─────────────────────────────────────────────
-     指定字體 family 為 "ShopeeNotoSans (content)"（五版位 @font-face 完全一致），
-     以 font-weight 400(Medium) / 700(Bold) 區分。渲染畫布前必須確認字體
-     100% 載入，避免 FOUT／預設字體替代被烤進 html2canvas 匯出圖。
-     ★ family 名以實際 @font-face 為準（含空格），不可用 "-Medium/-Bold"
-       這種不存在的字型名去 load，否則永遠找不到、只能等到逾時。
-     防呆：
-       ① CDN 慢或掛 → Promise.race 逾時放行，寧可 fallback 字體也不白屏卡死。
-       ② 老瀏覽器無 document.fonts API → 直接視為就緒，維持原本觸發流程。 */
-  var FONT_FAMILY  = '"ShopeeNotoSans (content)"';
-  var FONT_TIMEOUT = 4000;
-  function ensureFontsLoaded() {
-    if (!document.fonts || typeof document.fonts.load !== 'function') {
-      return Promise.resolve();            /* 降級：無 API 就當就緒 */
-    }
-    var loads = Promise.all([
-      document.fonts.load('400 16px ' + FONT_FAMILY),
-      document.fonts.load('700 16px ' + FONT_FAMILY)
-    ]).then(function(){ return document.fonts.ready; });
-    var timeout = new Promise(function(res){
-      setTimeout(function(){
-        console.warn('[layout-runtime] 字體載入逾時 ' + FONT_TIMEOUT + 'ms，以現有字體繼續繪製');
-        res();
-      }, FONT_TIMEOUT);
-    });
-    return Promise.race([loads, timeout]);
-  }
 
   function init() {
     if (inited) return;
-    /* ★ 字體 gate：字體未就緒前不繪製。第一次進來啟動預載後直接 return，
-       字體就緒（或逾時）後再重入 init 執行真正的繪製與外掛初始化。
-       兩條觸發路徑（CSS onload / window.load）都可能進來，靠 _fontLoadStarted
-       確保只啟動一次載入，靠 inited 確保只繪製一次。 */
-    if (!_fontsReady) {
-      if (!_fontLoadStarted) {
-        _fontLoadStarted = true;
-        ensureFontsLoaded().then(function(){ _fontsReady = true; init(); });
-      }
-      return;
-    }
     inited = true;
 
     /* ★ 鎖定「圖片類」元素不可被反藍/反灰：
@@ -564,7 +523,7 @@
     if (e.data.type === 'bn-compose') {
       /* 記住最後一次套用的構圖，供 _smartAutoLayout 在商品數量變動時重用 */
       window.__bnLastPreset = e.data.preset;
-      _applyCompose(e.data.preset);
+      _applyCompose(e.data.preset, { preserveManual: e.data.preserveManual !== false });
       return;
     }
 
@@ -787,6 +746,16 @@
         box.dataset.ratio = String(ratio);          /* setupProdDrag 等比縮放用 */
         if (personData.rot !== undefined) box.dataset.rot = personData.rot; /* 旋轉持久化 */
 
+        /* ★ 防呆保留：把手動旗標與百分比座標寫回 box.dataset，讓後續 _applyCompose 能
+           判斷「這個人物是否被手動調整過」而選擇保留。（與商品 box 在 bn-product-add 時一致） */
+        box.dataset.userMoved = personData.userMoved ? '1' : '0';
+        if (personData.userMoved && typeof personData.leftPct === 'number') {
+          box.dataset.leftPct   = personData.leftPct;
+          box.dataset.topPct    = personData.topPct;
+          box.dataset.widthPct  = personData.widthPct;
+          box.dataset.heightPct = personData.heightPct;
+        }
+
         /* ★ z-index：從 personData.zOrder 計算（zOrder=0 = 最前層）
            n = 總人物數；zOrder 最小 → z 最高（最前）
            公式：z = 20 + (n - 1 - zOrder)
@@ -828,12 +797,38 @@
         setupProdDrag(box, pzone);  /* 讓新生成的每一張人物圖，都具備獨立的拖移/縮放/滾輪能力 */
       });
 
-      /* ★ P0 修正（移除壞死段）：原本此處有一段「商品數量同步控制」，
-         誤用了未定義的 preset —— preset 只存在於 _applyCompose() 的 scope，
-         此 message handler 內並沒有它，每次收到 bn-persons 都會拋
-         ReferenceError 中斷後續。且商品的顯示/隱藏剪裁已由 _applyCompose()
-         （依 window.__bnLastPreset）統一負責，此段為重複又失效的邏輯，
-         直接刪除，行為零損失。 */
+      /* ==========================================
+      商品數量同步控制（與人物共用邏輯）
+       ========================================== */
+
+       var productEls = Array.from(
+       document.querySelectorAll('.bn-product')
+       );
+
+      /* 防呆：沒有商品直接跳出 */
+       if (productEls.length) {
+
+       var visibleProdCount =
+        Array.isArray(preset.prods)
+       ? preset.prods.length
+       : 0;
+
+       productEls.forEach(function(el, idx){
+
+      /* 超出構圖需求的商品直接隱藏 */
+        if (idx >= visibleProdCount) {
+
+        el.style.display = 'none';
+        el.style.pointerEvents = 'none';
+
+       } else {
+
+        el.style.display = '';
+        el.style.pointerEvents = '';
+       }
+
+  });
+}
       /* 確保 zone 屬性正確 */
       pzone.style.overflow = 'visible';
       pzone.style.position = 'relative';
@@ -2104,8 +2099,14 @@
  * 接收並套用全域構圖預設 (完全根除資產殘留與多餘 Slot 穿幫問題)
  * @param {Object} rawPreset 來自父控制介面的原始預設配置資料
  */
-function _applyCompose(rawPreset) {
+function _applyCompose(rawPreset, opts) {
   if (!rawPreset) return;
+
+  /* ★ 防呆保留機制：preserveManual 預設 true（保留使用者手動調整的圖層）。
+     只有「使用者主動點構圖按鈕並確認覆蓋」時，bn.html 才送 preserveManual:false，
+     此時才清除手動旗標讓全部圖層回歸自動排版。
+     自動觸發（上傳新圖／商品數量變動）與狀態還原一律走預設 true，不弄丟手動位置。*/
+  var preserveManual = !(opts && opts.preserveManual === false);
 
   var pzone = getProductZone();
   if (!pzone) return;
@@ -2122,6 +2123,18 @@ function _applyCompose(rawPreset) {
      實際尺寸換算已全部交給 layoutProducts()（它自己讀取容器尺寸），
      這裡只需要拿到容器參照本身，供下方 querySelector 與 layoutProducts() 使用。 */
   var prodZone = getProdZone();
+
+  /* ★ 主動重排（preserveManual=false）：先清除所有圖層的手動旗標與百分比座標，
+     讓後續排版把每個圖層都當「未調整」重新定位；同時避免殘留的舊 leftPct
+     在下一次自動重排時又被還原成過期位置。 */
+  if (!preserveManual) {
+    var _clrManual = function(box){
+      box.dataset.userMoved = '0';
+      ['leftPct','topPct','widthPct','heightPct'].forEach(function(k){ delete box.dataset[k]; });
+    };
+    Array.prototype.forEach.call(pzone.querySelectorAll('.bn-person-box'), _clrManual);
+    if (prodZone) Array.prototype.forEach.call(prodZone.querySelectorAll('.bn-prod-box'), _clrManual);
+  }
 
   /* ★ 不再自己判斷橫式/直式、不再二次覆寫 preset 的 x/h！
      bn.html 的 applyComposeBroadcast() 已經用每個版位回報的真實
@@ -2150,6 +2163,12 @@ function _applyCompose(rawPreset) {
     // 符合構圖數量，執行排版定位 (永遠以 Slot 0 第一張圖為最優先)
     var pConfig = preset.persons[currentSlot];
     personBox.style.display = 'block';
+
+    /* ★ 防呆保留：此人物被手動調整過(userMoved) 且處於保留模式 → 維持目前手動位置，
+       不套用構圖預設座標。（人物重建時已把 userMoved 寫回 dataset，見人物渲染段） */
+    if (preserveManual && personBox.dataset.userMoved === '1') {
+      return;
+    }
 
     var pRatio   = parseFloat(personBox.dataset.ratio) || 1;
     var pH       = (pConfig.h / 100) * zh;
@@ -2210,6 +2229,14 @@ function _applyCompose(rawPreset) {
   if (typeof layoutProducts === 'function') {
     layoutProducts(prodZone);
   }
+
+  /* ★ 防呆保留：重排後把「手動調整過的商品」還原回其百分比座標。
+     applyManualProductPositions 內部只處理 userMoved==='1' 的商品，未調整的不受影響。
+     放在 layoutProducts() 之後，確保任何觸發 compose 的路徑都能保留手動商品位置，
+     不再只依賴 bn-product-add 專屬的 setTimeout 補救。 */
+  if (preserveManual && typeof applyManualProductPositions === 'function') {
+    applyManualProductPositions(prodZone);
+  }
 }
   /* 日期跟隨主標：
      "1"      → 日期貼著主標右側（原有行為，向下相容）
@@ -2268,16 +2295,6 @@ function _applyCompose(rawPreset) {
   function doCapture(cb){
     var cv=document.getElementById('canvas');
     if(!cv){if(cb)cb(null);return;}
-
-    /* ★ 截圖前確保字體就緒，避免匯出圖 FOUT。fonts.ready 一定會 settle
-       （字體載入失敗也會轉為 loaded，不會無限掛），且 init 端已 await 過一次，
-       此處為最終渲染的雙保險。尚未就緒 → 等 ready 後重呼叫自己
-       （屆時 status 已是 loaded，不會再進此分支，最多遞迴一次）。 */
-    if (document.fonts && document.fonts.status !== 'loaded' &&
-        document.fonts.ready && typeof document.fonts.ready.then === 'function') {
-      document.fonts.ready.then(function(){ doCapture(cb); });
-      return;
-    }
 
     /* 讀取 KB 上限（config.css 的 --max-kb，單位 KB，0 = 無限制）*/
     var maxKb = parseFloat(
