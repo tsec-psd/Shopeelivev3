@@ -25,9 +25,50 @@
   loadCSS(fname + '.config.css', onBothLoaded);
   window.addEventListener('load', function(){ setTimeout(init, 600); });
   var inited = false;
+  var _fontsReady = false;         /* 字體是否已就緒（或已逾時放行） */
+  var _fontLoadStarted = false;    /* 防止兩條 init 觸發路徑重複啟動字體載入 */
+
+  /* ── 字體預載（鐵律）─────────────────────────────────────────────
+     指定字體 family 為 "ShopeeNotoSans (content)"（五版位 @font-face 完全一致），
+     以 font-weight 400(Medium) / 700(Bold) 區分。渲染畫布前必須確認字體
+     100% 載入，避免 FOUT／預設字體替代被烤進 html2canvas 匯出圖。
+     ★ family 名以實際 @font-face 為準（含空格），不可用 "-Medium/-Bold"
+       這種不存在的字型名去 load，否則永遠找不到、只能等到逾時。
+     防呆：
+       ① CDN 慢或掛 → Promise.race 逾時放行，寧可 fallback 字體也不白屏卡死。
+       ② 老瀏覽器無 document.fonts API → 直接視為就緒，維持原本觸發流程。 */
+  var FONT_FAMILY  = '"ShopeeNotoSans (content)"';
+  var FONT_TIMEOUT = 4000;
+  function ensureFontsLoaded() {
+    if (!document.fonts || typeof document.fonts.load !== 'function') {
+      return Promise.resolve();            /* 降級：無 API 就當就緒 */
+    }
+    var loads = Promise.all([
+      document.fonts.load('400 16px ' + FONT_FAMILY),
+      document.fonts.load('700 16px ' + FONT_FAMILY)
+    ]).then(function(){ return document.fonts.ready; });
+    var timeout = new Promise(function(res){
+      setTimeout(function(){
+        console.warn('[layout-runtime] 字體載入逾時 ' + FONT_TIMEOUT + 'ms，以現有字體繼續繪製');
+        res();
+      }, FONT_TIMEOUT);
+    });
+    return Promise.race([loads, timeout]);
+  }
 
   function init() {
     if (inited) return;
+    /* ★ 字體 gate：字體未就緒前不繪製。第一次進來啟動預載後直接 return，
+       字體就緒（或逾時）後再重入 init 執行真正的繪製與外掛初始化。
+       兩條觸發路徑（CSS onload / window.load）都可能進來，靠 _fontLoadStarted
+       確保只啟動一次載入，靠 inited 確保只繪製一次。 */
+    if (!_fontsReady) {
+      if (!_fontLoadStarted) {
+        _fontLoadStarted = true;
+        ensureFontsLoaded().then(function(){ _fontsReady = true; init(); });
+      }
+      return;
+    }
     inited = true;
 
     /* ★ 鎖定「圖片類」元素不可被反藍/反灰：
@@ -208,6 +249,10 @@
       Array.from(zone.querySelectorAll('img.bn-logo-img')).forEach(function(i){i.remove();});
       /* 還原 display 避免舊設定殘留 */
       zone.style.display = ''; zone.style.alignItems = '';
+      /* ★ 還原上一次 flex 收合寫進去的 inline width，讓 config.css 的
+         width(!important) 重新當基準；稍後 flex 分支載入完 logo 會再依實際寬收合。
+         沒有這行，換 logo / 移除 logo 後會殘留上次的收合寬度而失準。 */
+      zone.style.removeProperty('width');
 
       var fn = decodeURIComponent(location.pathname.split('/').pop());
       var fnLow = fn.toLowerCase();
@@ -369,13 +414,25 @@
             zone.style.justifyContent = 'center';
             zone.style.gap            = FLEX_GAP + 'px';
 
-            flexImgs.forEach(function(el) {
+            var renderedW = 0;
+            flexImgs.forEach(function(el, idx) {
               var w = Math.round(parseFloat(el.dataset.naturalW || 0) * scale);
               var h = Math.round(flexZoneH * scale);
               el.style.width   = w + 'px';
               el.style.height  = h + 'px';
               el.style.display = 'block';
+              renderedW += w;
+              if (idx < n - 1) renderedW += FLEX_GAP;   /* 多張廠商 logo 之間的間距也算進去 */
             });
+
+            /* ★ 方形/窄型 logo 修正：把 .廠商LOGO範圍（flex item）的寬度收合成
+               「廠商 logo 實際渲染寬」，而不是固定的 --logo-zone-w。
+               收合後廠商 logo 會緊貼分隔線（只剩 .LOGO範圍 的 gap），
+               且因 .LOGO範圍 本身是 justify-content:center，
+               整串 LOGO（蝦導播＋分隔線＋廠商）會自動重新水平置中。
+               用 setProperty(...,'important') 覆寫 config.css 的 width:...!important。
+               ★ 只動廠商框，完全不碰蝦導播 LOGO 的框與大小。 */
+            zone.style.setProperty('width', Math.max(1, renderedW) + 'px', 'important');
           };
           img.onerror = function() { flexLoaded++; };
         });
@@ -636,6 +693,12 @@
         divider.style.setProperty('background',   divColor, 'important');
         divider.style.setProperty('border-color', divColor, 'important');
       }
+
+      /* ── SBD 白框 LIVE 字色：與 LOGO/分隔線同步切換（深底=白字 / 淺底=黑字）──
+         沿用同一個 e.data.white 訊號保證三者一致；非 SBD 版位或尚未建立
+         overlay 時 _applySbdOverlayTheme 會安靜略過，不影響其他版位。 */
+      _lastLiveWhite = !!e.data.white;
+      _applySbdOverlayTheme(_lastLiveWhite);
       return;
     }
 
@@ -765,38 +828,12 @@
         setupProdDrag(box, pzone);  /* 讓新生成的每一張人物圖，都具備獨立的拖移/縮放/滾輪能力 */
       });
 
-      /* ==========================================
-      商品數量同步控制（與人物共用邏輯）
-       ========================================== */
-
-       var productEls = Array.from(
-       document.querySelectorAll('.bn-product')
-       );
-
-      /* 防呆：沒有商品直接跳出 */
-       if (productEls.length) {
-
-       var visibleProdCount =
-        Array.isArray(preset.prods)
-       ? preset.prods.length
-       : 0;
-
-       productEls.forEach(function(el, idx){
-
-      /* 超出構圖需求的商品直接隱藏 */
-        if (idx >= visibleProdCount) {
-
-        el.style.display = 'none';
-        el.style.pointerEvents = 'none';
-
-       } else {
-
-        el.style.display = '';
-        el.style.pointerEvents = '';
-       }
-
-  });
-}
+      /* ★ P0 修正（移除壞死段）：原本此處有一段「商品數量同步控制」，
+         誤用了未定義的 preset —— preset 只存在於 _applyCompose() 的 scope，
+         此 message handler 內並沒有它，每次收到 bn-persons 都會拋
+         ReferenceError 中斷後續。且商品的顯示/隱藏剪裁已由 _applyCompose()
+         （依 window.__bnLastPreset）統一負責，此段為重複又失效的邏輯，
+         直接刪除，行為零損失。 */
       /* 確保 zone 屬性正確 */
       pzone.style.overflow = 'visible';
       pzone.style.position = 'relative';
@@ -1324,6 +1361,36 @@
      模式時建立一次，之後重複呼叫直接回傳快取節點，避免重複插入。
      ★ 單一絕對座標窗口：KV 底圖與商品都掛在同一個 .bn-kv-frame 裡，
        共用同一組裁切範圍，不再拆成兩個矩形——兩者永遠保證對齊、同步。*/
+  /* ── SBD 白框 overlay 的 LIVE 字色自動切換 ──────────────────────
+     白框裝飾 PNG 裡烤了 LIVE 標籤。預設 --bn-sbd-overlay 是「白字 LIVE」，
+     在淺色背景上對比不足；config.css 可另外指定 --bn-sbd-overlay-lightbg
+     為「黑字 LIVE」版本（★需與白字版同尺寸、透明窗口位置完全一致）。
+     切換訊號沿用配色器既有的 bn-shopee-logo{white}：white=true 代表深底
+     （用白字版），white=false 代表淺底（改用黑字版）。如此 LIVE 會與蝦導播
+     LOGO、分隔線的深淺切換完全同步一致，且配色器端無需任何改動。 */
+  var _lastLiveWhite = null; /* null=尚未收到主題訊號 → 用預設白字版 */
+
+  function _pickSbdOverlayName(white){
+    var cs = getComputedStyle(document.documentElement);
+    var def   = (cs.getPropertyValue('--bn-sbd-overlay')         || '').trim().replace(/^["']|["']$/g,'');
+    var light = (cs.getPropertyValue('--bn-sbd-overlay-lightbg') || '').trim().replace(/^["']|["']$/g,'');
+    /* 只有「明確判定為淺底(white===false)」且有設定黑字版時才切換；
+       其餘情況（未知 / 深底 / 沒設定黑字版）一律用預設白字版，向下相容。 */
+    if (white === false && light) return light;
+    return def;
+  }
+
+  function _applySbdOverlayTheme(white){
+    var canvas  = getCanvasEl();
+    var overlay = canvas ? canvas.querySelector('.bn-kv-overlay') : null;
+    if (!overlay) return;                 /* 非 SBD 或尚未建立 overlay → 安靜略過 */
+    var name = _pickSbdOverlayName(white);
+    if (!name) return;
+    var next = '../img/' + name;
+    /* 相同 src 就不重設，避免 html2canvas 匯出前不必要的重載閃爍 */
+    if (overlay.getAttribute('src') !== next) overlay.src = next;
+  }
+
   function _ensureSbdFrame(){
     var canvas = getCanvasEl();
     if (!canvas) return null;
@@ -1361,8 +1428,10 @@
            --bn-sbd-overlay: "SBD_白框_直播大廳.png";
          沒有設定這個變數時，安靜跳過覆蓋圖建立（只有裁切窗口，
          沒有裝飾框），不會報錯，也方便日後擴充更多版位。*/
-    var overlayName = getComputedStyle(document.documentElement)
-      .getPropertyValue('--bn-sbd-overlay').trim().replace(/^["']|["']$/g, '');
+    /* 初始 src 依「目前已知的主題深淺」挑白字/黑字版：
+       _lastLiveWhite 為 null（還沒收到主題）時 _pickSbdOverlayName 回傳預設白字版，
+       行為與原本一致；若進 SBD 前已判定淺底，這裡就會直接用黑字版，避免先閃白字。 */
+    var overlayName = _pickSbdOverlayName(_lastLiveWhite);
     if (overlayName && !canvas.querySelector('.bn-kv-overlay')) {
       var overlay = document.createElement('img');
       overlay.className = 'bn-kv-overlay';
@@ -2199,6 +2268,16 @@ function _applyCompose(rawPreset) {
   function doCapture(cb){
     var cv=document.getElementById('canvas');
     if(!cv){if(cb)cb(null);return;}
+
+    /* ★ 截圖前確保字體就緒，避免匯出圖 FOUT。fonts.ready 一定會 settle
+       （字體載入失敗也會轉為 loaded，不會無限掛），且 init 端已 await 過一次，
+       此處為最終渲染的雙保險。尚未就緒 → 等 ready 後重呼叫自己
+       （屆時 status 已是 loaded，不會再進此分支，最多遞迴一次）。 */
+    if (document.fonts && document.fonts.status !== 'loaded' &&
+        document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+      document.fonts.ready.then(function(){ doCapture(cb); });
+      return;
+    }
 
     /* 讀取 KB 上限（config.css 的 --max-kb，單位 KB，0 = 無限制）*/
     var maxKb = parseFloat(

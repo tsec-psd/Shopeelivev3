@@ -127,6 +127,7 @@
   --bn-sbd-window-w: 440.68px;
   --bn-sbd-window-h: 363.9px;
   --bn-sbd-overlay: "SBD_白框_FB Post.png";
+  --bn-sbd-overlay-lightbg: "SBD_白框_FB Post_黑字.png";      /* ★淺底用：LIVE 黑字版檔名填這裡（放 img/），留空=沿用上面白字版 */
   
 }
 :root {
@@ -171,13 +172,16 @@
   /* ↓↓↓ 位置為「暫定示意值」，右下角比照直播大廳，等你 PS 導出後覆蓋 ↓↓↓ */
   left: 917.952px !important;
   right: 10px;                           /* ★ 暫定：右緣內縮 */
-  top: 586px;                            /* ★ 暫定：對齊 bar範圍 垂直置中 */
+  top: 581.2px;                          /* ★ 暫定：對齊 bar範圍 垂直置中（原 586，因 line-height 補償上移 4.8px） */
   /* ↑↑↑ 待覆蓋 ↑↑↑ */
   font-size: 32px;                       /* ★ 暫定字級（直播大廳用 PS matrix 縮放，這裡先給等效大小） */
   font-family: "ShopeeNotoSans (content)";
   color: #ffffff;
   text-align: right;
-  line-height: 1;
+  /* ★ BUG 修正：line-height 1 → 1.3，避免 y/p/q 降部被 overflow:hidden 裁切；
+       此版位無 matrix 縮放（scaleY=1），上半 leading = (1.3-1)/2×32 = 4.8px，
+       top 同步上移 4.8px 補償。座標為暫定值，PS 導出後連同上方 left/top 一起覆蓋。 */
+  line-height: 1.3;
   white-space: nowrap;
   transform-origin: 100% 0 !important;   /* 覆寫全域 0 0：從右上角縮放，長文案不往左位移、右緣永遠貼 right */
   max-width: 620px;                      /* 防溢出：超長文案在框內截斷，不爆版、不蓋商品 */

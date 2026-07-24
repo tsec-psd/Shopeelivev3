@@ -273,4 +273,5 @@ body.sbd-mode .SBD_LOGO範圍 { display: block !important; }
   --bn-sbd-window-w: 336.82px;
   --bn-sbd-window-h: 250.42px;
   --bn-sbd-overlay: "SBD_白框_直播時縮圖.png";
+  --bn-sbd-overlay-lightbg: "SBD_白框_直播時縮圖_黑字.png";      /* ★淺底用：LIVE 黑字版檔名填這裡（放 img/），留空=沿用上面白字版 */
 }

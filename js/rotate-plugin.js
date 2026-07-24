@@ -97,6 +97,11 @@
     var handle = document.createElement('div');
     handle.className = 'bn-rot-handle';
     handle.setAttribute(HANDLE_ID_ATTR, '1');
+    /* ★ 轉存修正：標記 data-no-capture，讓 layout-runtime.js 的 html2canvas
+       ignoreElements 在截圖時自動排除整根旋轉把手（含綠色連接桿 ::before
+       與角度標籤 .bn-rot-badge 子節點），避免綠色拖曳桿被一起烘進匯出圖。
+       沿用既有慣例（同角落把手的 data-corner），不需改動截圖端邏輯。 */
+    handle.setAttribute('data-no-capture', 'true');
     var badge = document.createElement('div');
     badge.className = 'bn-rot-badge';
     handle.appendChild(badge);

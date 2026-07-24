@@ -208,4 +208,5 @@
   --bn-sbd-window-w: 731.9px;
   --bn-sbd-window-h: 611.63px;
   --bn-sbd-overlay: "SBD_白框_開播字卡_直式.png";
+  --bn-sbd-overlay-lightbg: "SBD_白框_開播字卡_直式_黑字.png";      /* ★淺底用：LIVE 黑字版檔名填這裡（放 img/），留空=沿用上面白字版 */
 }

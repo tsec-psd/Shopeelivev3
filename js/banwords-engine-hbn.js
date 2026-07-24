@@ -235,6 +235,14 @@
 
     if (role === 'date') {
       out = out.replace(/[^\p{Script=Han}\p{L}\p{N}\s,$%\/\-:]/gu, '');
+    } else if (role === 'host') {
+      /* 購物專家（主播 Bar）：在一般白名單之外，額外放行分隔符「｜」與「|」，
+         用於「購物專家｜姓名」格式。
+         防呆：全形（U+FF5C）與半形（U+007C）都列入，
+              避免使用者手打半形分隔符時又被清空。
+         注意：此分隔符「只」對 host 角色開放，主標/副標/品牌名仍走下方 else，
+              不受影響（維持既有嚴格白名單）。 */
+      out = out.replace(/[^\p{Script=Han}\p{L}\p{N}\s,$%｜|]/gu, '');
     } else {
       out = out.replace(/[^\p{Script=Han}\p{L}\p{N}\s,$%]/gu, '');
     }
