@@ -1171,7 +1171,7 @@
       broadcast({type:'bn-product-zorder', order: order});
     }
     /* 開啟 editor-plugin 編輯器（裁切/去背/擦除/影子） */
-    function openProductEditor(pid){
+    function openProductEditor(pid, onDone){
       var p=window._bnProducts.find(function(x){return x.id===pid;});
       if(!p)return;
 
@@ -1179,14 +1179,40 @@
       if(!window.HBNProductEditorPlugin){
         var s=document.createElement('script');
         s.src='js/editor-plugin.js';
-        s.onload=function(){ doOpenEditor(pid); };
+        s.onload=function(){ doOpenEditor(pid, onDone); };
         document.head.appendChild(s);
         return;
       }
-      doOpenEditor(pid);
+      doOpenEditor(pid, onDone);
     }
 
-    function doOpenEditor(pid){
+    /* ★ 對外開放:供共編器(coedit-plugin)以 product id 直接開編輯器 / 換圖 */
+    window.openProductEditor = openProductEditor;
+
+    /* 手動換圖:用新圖(dataURL)取代該商品,走與編輯存回相同的 trimAlpha→更新→重播流程 */
+    function replaceProductImage(pid, dataUrl, onDone){
+      var p=window._bnProducts.find(function(x){return x.id===pid;});
+      if(!p || !dataUrl) return;
+      var im=new Image();
+      im.onload=function(){
+        var trimmed=trimAlpha(im);            /* 與編輯路徑一致:去背後透明邊距修正、重算 ratio */
+        p.src=trimmed.src;
+        p.ratio=trimmed.ratio;
+        renderProdList();
+        if(typeof onDone==='function') onDone(p);   /* 共編回填 */
+        broadcast({type:'bn-product-remove',id:p.id});
+        setTimeout(function(){
+          var idx=window._bnProducts.indexOf(p);
+          broadcast({type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale||1,position:p.position||0,rot:p.rot||0});
+          if (typeof saveHistory === 'function') saveHistory();
+        },50);
+      };
+      im.onerror=function(){ alert('圖片載入失敗,請換一張'); };
+      im.src=dataUrl;
+    }
+    window.replaceProductImage = replaceProductImage;
+
+    function doOpenEditor(pid, onDone){
       if(!window.HBNProductEditorPlugin){ alert('editor-plugin.js 未載入'); return; }
       var p=window._bnProducts.find(function(x){return x.id===pid;});
       if(!p)return;
@@ -1222,6 +1248,7 @@
             p.src=trimmed.src;
             p.ratio=trimmed.ratio;
             renderProdList();
+            if(typeof onDone==='function') onDone(p);   /* ★ 供共編回填:編輯存回後通知呼叫端 */
             broadcast({type:'bn-product-remove',id:p.id});
             setTimeout(function(){
               var idx=window._bnProducts.indexOf(p);
@@ -1433,20 +1460,40 @@
        ★ 修正：系統已由單人物 window._bnPerson 升級為多人物陣列 window._bnPersons，
        原本兩個函式仍寫死讀取 window._bnPerson（永遠是 undefined），導致編輯按鈕點擊無反應。
        現在改為依照呼叫端傳入的 person 物件（含 id）精準定位，支援多人物各自獨立編輯。 */
-    function openPersonEditor(person){
+    function openPersonEditor(person, onDone){
       /* 防呆：呼叫端未傳入物件，或物件無有效圖片來源，直接中止 */
       if(!person||!person.src) return;
       if(!window.HBNProductEditorPlugin){
         var s=document.createElement('script');
         s.src='js/editor-plugin.js';
-        s.onload=function(){ doOpenPersonEditor(person); };
+        s.onload=function(){ doOpenPersonEditor(person, onDone); };
         document.head.appendChild(s);
         return;
       }
-      doOpenPersonEditor(person);
+      doOpenPersonEditor(person, onDone);
     }
+    window.openPersonEditor = openPersonEditor;   /* ★ 對外開放:供共編以人物物件開編輯器 */
 
-    function doOpenPersonEditor(person){
+    /* 手動換圖(人物):走與人物編輯存回相同的 trimAlpha→更新→bn-person-update 流程 */
+    function replacePersonImage(pid, dataUrl, onDone){
+      var target=(window._bnPersons||[]).find(function(x){return x.id===pid;});
+      if(!target || !dataUrl) return;
+      var im=new Image();
+      im.onload=function(){
+        var trimmed=trimAlpha(im);
+        target.src=trimmed.src;
+        target.ratio=trimmed.ratio;
+        renderPersonList();
+        if(typeof onDone==='function') onDone(target);   /* 共編回填 */
+        broadcast({type:'bn-person-update',id:target.id,src:trimmed.src,ratio:trimmed.ratio});
+        if (typeof saveHistory === 'function') saveHistory();
+      };
+      im.onerror=function(){ alert('圖片載入失敗,請換一張'); };
+      im.src=dataUrl;
+    }
+    window.replacePersonImage = replacePersonImage;
+
+    function doOpenPersonEditor(person, onDone){
       if(!window.HBNProductEditorPlugin){ alert('editor-plugin.js 未載入'); return; }
       if(!person||!person.src) return;
 
@@ -1491,6 +1538,7 @@
             target.src=trimmed.src;
             target.ratio=trimmed.ratio;
             renderPersonList();
+            if(typeof onDone==='function') onDone(target);   /* ★ 供共編回填 */
             /* 用 bn-person-update 精準更新單一人物，避免覆蓋其他人物的位置與順序 */
             broadcast({type:'bn-person-update',id:target.id,src:trimmed.src,ratio:trimmed.ratio});
             if (typeof saveHistory === 'function') saveHistory();
@@ -1566,10 +1614,19 @@
         snapshots.forEach(function(s) {
           folder.file(s.name+'.png', s.dataUrl.split(',')[1], {base64:true});
         });
+        /* ★ 一併打包「暫存檔」(與『下載暫存』位元組相同的 JSON):解壓後可用『⬆ 上傳暫存』讀回續編。
+           防呆:狀態外掛未就緒則略過,不影響出圖。 */
+        var _stateOk = false;
+        try {
+          if (window._bnStatePlugin && typeof window._bnStatePlugin.collect === 'function') {
+            zip.file('\u8766\u5c0e\u64ad_\u66ab\u5b58\u6a94.json', JSON.stringify(window._bnStatePlugin.collect(), null, 2));
+            _stateOk = true;
+          }
+        } catch (err) { _stateOk = false; }
         zip.generateAsync({type:'blob'}).then(function(blob) {
           var ts = new Date().toISOString().slice(0,16).replace('T','_');
           triggerDownload(URL.createObjectURL(blob), '蝦導播素材_'+ts+'.zip');
-          setProgress('✅ 已打包 '+snapshots.length+' 個版位');
+          setProgress('✅ 已打包 '+snapshots.length+' 個版位' + (_stateOk ? '（含暫存檔）' : ''));
           btn.disabled = false;
           setTimeout(function(){ setProgress(''); }, 3000);
         });
@@ -1619,6 +1676,7 @@
            收到後用 applyManualProductPositions() 覆寫回正確位置。*/
         window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0,rot:p.rot||0,
           userMoved: !!p.userMoved,
+          coeditApplied: !!p.coeditApplied,   /* ★#3 共編/手動之別隨重建送回,safe 保護才不會因重建失效 */
           leftPct: p.userMoved ? p.leftPct : undefined,
           topPct: p.userMoved ? p.topPct : undefined,
           widthPct: p.userMoved ? p.widthPct : undefined,
@@ -1683,7 +1741,7 @@
       /* ★ 同商品邏輯：只把「使用者手動拖移/縮放過」的人物百分比座標帶過去，
          沒被動過的人物繼續讓 layout-runtime.js 用 config.css 的預設 slot 排版 */
       var persons = (window._bnPersons||[]).map(function(p){
-        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved, rot: p.rot||0 };
+        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved, coeditApplied: !!p.coeditApplied, rot: p.rot||0 };
         if (p.userMoved) {
           out.leftPct = p.leftPct; out.topPct = p.topPct;
           out.widthPct = p.widthPct; out.heightPct = p.heightPct;
@@ -1694,8 +1752,9 @@
     };
 
     window._bnRebroadcastProducts = function(){
-      var ids = (window._bnProducts||[]).map(function(p){ return p.id; });
-      ids.forEach(function(id){ broadcast({type:'bn-product-remove', id:id}); });
+      /* ★ 先移除 iframe 內「已不在清單」的殘留 box(帶 keep 清單:保留有效 box、不全清重建,避免 Undo 抖動);
+         有效 box 交給下方 bn-product-add 就地更新。 */
+      broadcast({type:'bn-product-remove', id:'__all__', keep: (window._bnProducts||[]).map(function(p){ return p.id; })});
       var reordered = (window._bnProducts||[]).slice().sort(function(a,b){
         return (a.position||0)-(b.position||0);
       });
@@ -1708,6 +1767,7 @@
             name:p.name, index:idx, sizeScale:p.sizeScale||1,
             position:p.position||0, zOrder:p.zOrder||0, rot:p.rot||0,
             userMoved: !!p.userMoved,
+            coeditApplied: !!p.coeditApplied,   /* ★#3 重播商品時保留共編/手動之別 */
             leftPct: p.userMoved ? p.leftPct : undefined,
             topPct: p.userMoved ? p.topPct : undefined,
             widthPct: p.userMoved ? p.widthPct : undefined,
@@ -1718,9 +1778,12 @@
           return (a.zOrder||0)-(b.zOrder||0);
         }).map(function(p){ return p.id; });
         broadcast({type:'bn-product-order', order:order});
-        
-        // 異步重播完畢後，確保狀態同步落盤一次
-        if (window._bnPushHistoryState) window._bnPushHistoryState(true);
+
+        /* ★ 改用 saveHistory()(去抖動+去重+還原中抑制):原本 _bnPushHistoryState(true) 是 force、
+           繞過去重,還原時(+200ms、還原鎖已在 100ms 解除)會塞一筆幽靈歷史 → 破壞 undo/redo、
+           連帶讓共編套用後的狀態被污染而「跑掉」。改一般 saveHistory 後,還原時狀態與剛還原者相同
+           會被去重略過,不再污染。 */
+        if (typeof saveHistory === 'function') saveHistory();
       }, 200);
     };
   });
