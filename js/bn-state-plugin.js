@@ -271,6 +271,85 @@
     return strVal;
   }
 
+  /* ══════════════════════════════════════
+     2a-0. 指定色號抽取（單一權威來源 / Single Source of Truth）
+     ────────────────────────────────────────
+     設計目標：色號的「取值欄」不再寫死 C 欄，改為與版配欄位一致的
+     「關鍵字定位 + 往右第一個非空儲存格」動態邏輯，讓工單欄位漂移
+     時仍能正確命中；同時把 hex 正規化收斂在這一支，供
+     color-theme-plugin.js（自動配色器）透過對外接口共用，
+     避免兩處各自維護、行為分歧。
+
+     ★ 對外接口：window._bnStatePlugin.extractColor(sheet)
+         參數：SheetJS worksheet 物件
+         回傳：正規化後的 #RRGGBB（大寫）或 null（未填 / 無效 / 無法解析）
+  ══════════════════════════════════════ */
+
+  /* 無效填寫黑名單：值命中任一關鍵字即視為「未指定色號」
+     （'無指定'、'GD'、'若…'、'指定…'、'請…' 這類說明性文字）
+     — 取 bn-state 舊版 ['無','GD','若','指定'] 與 color-theme 舊版
+       ['無','GD','若','指定','請'] 的超集，向後相容不漏接。 */
+  var _COLOR_INVALID_KW = ['無', 'GD', '若', '指定', '請'];
+
+  /* 把工單填寫的原始字串正規化為 #RRGGBB（大寫）；無法解析回傳 null。
+     支援：
+       格式 A：純 hex（6 位或 3 位短格式，可含或不含開頭 #）例 FF8866 / #f86
+       格式 B：字串中夾帶色碼（例「底色：#FF8866」） */
+  function _normalizeColorCode(rawVal) {
+    var cv = String(rawVal || '').trim();
+    if (!cv) return null;
+    /* 命中無效填寫黑名單 → 視為未指定，靜默略過 */
+    for (var k = 0; k < _COLOR_INVALID_KW.length; k++) {
+      if (cv.indexOf(_COLOR_INVALID_KW[k]) !== -1) return null;
+    }
+    /* 格式 A：純 hex（先剝掉開頭的 #，因此無 # 的 FF8866 也能過）*/
+    var plain = cv.replace(/^#+/, '');
+    if (/^[0-9A-Fa-f]{6}$/.test(plain)) return ('#' + plain).toUpperCase();
+    if (/^[0-9A-Fa-f]{3}$/.test(plain)) {
+      return ('#' + plain[0] + plain[0] + plain[1] + plain[1] + plain[2] + plain[2]).toUpperCase();
+    }
+    /* 格式 B：字串中夾帶 #hex */
+    var m = cv.match(/#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/);
+    if (m) {
+      var hx = m[1];
+      if (hx.length === 3) hx = hx[0] + hx[0] + hx[1] + hx[1] + hx[2] + hx[2];
+      return ('#' + hx).toUpperCase();
+    }
+    return null;
+  }
+
+  /* 從 header:'A' 陣列 rows 中，用動態欄位邏輯抽出色號（與版配欄位同一套思路）：
+       1) 遍歷每一列每一欄，找到「內容包含」指定色號 / 指定色碼 的儲存格
+          （用 indexOf 而非 ===，容忍「指定色號(自動偵測)」這類帶註記標籤）
+       2) 取「同列、關鍵字欄往右第一個非空」的儲存格作為值（★不再寫死 C 欄）
+       3) 第一個命中關鍵字的列即定生死：值無效就回傳 null、不再往後找，
+          與原自動配色器（color-theme）行為一致，避免多列時語意漂移。 */
+  function _extractColorFromRows(rows) {
+    var COLS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r] || {};
+      for (var ci = 0; ci < COLS.length; ci++) {
+        var cell = String(row[COLS[ci]] || '').trim();
+        if (!cell) continue;
+        if (cell.indexOf('指定色號') === -1 && cell.indexOf('指定色碼') === -1) continue;
+        /* 命中關鍵字欄 → 往右找第一個非空值 */
+        for (var ni = ci + 1; ni < COLS.length; ni++) {
+          var nv = String(row[COLS[ni]] || '').trim();
+          if (nv) return _normalizeColorCode(nv);   /* 找到值：正規化後定生死 */
+        }
+        return null;   /* 關鍵字右側整列皆空 → 未指定 */
+      }
+    }
+    return null;   /* 整張表都沒有指定色號列 */
+  }
+
+  /* 對外便利函式：吃 SheetJS worksheet，回傳正規化色號或 null */
+  function extractWorkorderColor(sheet) {
+    if (!global.XLSX || !sheet) return null;
+    var rows = global.XLSX.utils.sheet_to_json(sheet, { header: 'A', defval: '', raw: false });
+    return _extractColorFromRows(rows);
+  }
+
   function parseWorkorderSheet(wb, sheetName) {
     if (!global.XLSX) return null;
     var sheet = wb.Sheets[sheetName];
@@ -282,21 +361,15 @@
 
     var result = { headline:'', subline:'', time:'', host:'', colorCode:'' };
 
+    /* 指定色號：改用單一權威抽取器（動態欄位定位 + 正規化），
+       不再於下方列迴圈內寫死 C 欄。回傳 null 時保持空字串。 */
+    result.colorCode = _extractColorFromRows(rows) || '';
+
     /* 欄位字母清單（A~Z，工單一般不超過這個範圍）*/
     var COLS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
     rows.forEach(function(row, idx) {
       var rawRow = rowsRaw[idx] || {};
-
-      /* 指定色號：A欄含「指定色號」→ C欄取值（位置固定，直接讀）*/
-      var aVal = String(row['A']||'').trim();
-      if (aVal.indexOf('指定色號') !== -1 || aVal.indexOf('指定色碼') !== -1) {
-        var cv = String(row['C']||'').trim();
-        if (cv && cv.indexOf('無')===-1 && cv.indexOf('GD')===-1 &&
-            cv.indexOf('若')===-1 && cv.indexOf('指定')===-1) {
-          result.colorCode = cv;
-        }
-      }
 
       /* 版配欄位：遍歷每一欄，找到精確符合關鍵字的儲存格後，
          取同列往右第一個非空格儲存格作為值。
@@ -488,7 +561,8 @@
     if (typeof global.broadcastText === 'function') global.broadcastText();
 
     /* 色碼：若有指定色號，填入色票並廣播 */
-    if (wo.colorCode && /^#[0-9A-Fa-f]{3,6}$/.test(wo.colorCode)) {
+    /* 抽取器保證回傳正規化 #RRGGBB 或空字串，故此處只需驗完整 6 位 hex */
+    if (wo.colorCode && /^#[0-9A-Fa-f]{6}$/.test(wo.colorCode)) {
       if (global.colorState) {
         global.colorState.canvasBg = wo.colorCode;
         if (typeof global.renderColorPickers === 'function') global.renderColorPickers();
@@ -746,7 +820,7 @@
      初始化
   ══════════════════════════════════════ */
   ready(function(){
-    global._bnStatePlugin = { save:autoSave, load:autoLoad, collect:collectState, apply:applyState, toast:showToast };
+    global._bnStatePlugin = { save:autoSave, load:autoLoad, collect:collectState, apply:applyState, toast:showToast, extractColor:extractWorkorderColor };
 
     /* banwords */
     initBanwords();

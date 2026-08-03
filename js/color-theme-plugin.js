@@ -241,39 +241,25 @@
      兩者皆會呼叫 _tryApplyColor(sheetName)，函式內部去重避免重複套用。
   ════════════════════════════════════════════════════════ */
 
-  /** 從 _woWorkbook 的指定 Sheet 提取 C 欄色碼，無填寫回傳 null */
+  /** 從 _woWorkbook 的指定 Sheet 提取色碼，無填寫回傳 null。
+      ★ 已收斂為單一權威來源：色號的「動態欄位定位 + 正規化」邏輯
+        統一由 bn-state-plugin 的 window._bnStatePlugin.extractColor 提供。
+        本函式只負責定位 sheet 後委派，不再自行維護一份解析／正規化，
+        避免兩處各自為政、行為分歧（含取值欄改為動態、不再寫死 C 欄）。 */
   function _extractColor(sheetName) {
     if (!global.XLSX || !global._woWorkbook) return null;
     const sheet = global._woWorkbook.Sheets[sheetName];
     if (!sheet) return null;
 
-    const rows = global.XLSX.utils.sheet_to_json(sheet, { header:'A', defval:'', raw:false });
-    for (let i = 0; i < rows.length; i++) {
-      const aVal = String(rows[i]['A'] || '');
-      if (aVal.indexOf('指定色號') === -1 && aVal.indexOf('指定色碼') === -1) continue;
-
-      const cv = String(rows[i]['C'] || '').trim();
-      /* 過濾無效填寫 */
-      if (!cv) return null;
-      if (['無','GD','若','指定','請'].some(kw => cv.indexOf(kw) !== -1)) return null;
-
-      /* 格式 A：純 6 位 hex（含或不含 #） */
-      const plain = cv.replace(/^#+/, '');
-      if (/^[0-9A-Fa-f]{6}$/.test(plain)) return ('#' + plain).toUpperCase();
-      /* 格式 A：3 位短格式 */
-      if (/^[0-9A-Fa-f]{3}$/.test(plain)) {
-        return ('#' + plain[0]+plain[0]+plain[1]+plain[1]+plain[2]+plain[2]).toUpperCase();
-      }
-      /* 格式 B：字串中夾帶色碼（如「底色：#FF8866」） */
-      const m = cv.match(/#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b/);
-      if (m) {
-        let hx = m[1];
-        if (hx.length === 3) hx = hx[0]+hx[0]+hx[1]+hx[1]+hx[2]+hx[2];
-        return ('#' + hx).toUpperCase();
-      }
+    /* 委派給單一權威抽取器。防呆：bn-state 尚未就緒（極端載入順序）時，
+       靜默回傳 null（刻意不自行重複實作解析，以維持單一來源）——
+       本回合略過自動配色，後續工單事件接口就緒後會再套用。 */
+    const sp = global._bnStatePlugin;
+    if (!sp || typeof sp.extractColor !== 'function') {
+      console.warn('[ColorTheme] _bnStatePlugin.extractColor 尚未就緒，本回合略過自動配色');
       return null;
     }
-    return null;
+    return sp.extractColor(sheet);
   }
 
   /* 記錄上一次套用的色碼，避免重複觸發 */
