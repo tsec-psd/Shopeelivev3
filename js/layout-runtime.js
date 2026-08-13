@@ -114,6 +114,82 @@
 
     /* 啟用畫布文字直接編輯 */
     attachEditableToAll();
+
+    /* 蝦導播 LOGO 等比修正：HTML 裡是靜態 <img>，就算 bn-shopee-logo
+       從未廣播也要先校正一次，並掛上常駐 load 監聽 */
+    _fitAllLogoImgs();
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+     蝦導播 LOGO 等比修正（html2canvas 匯出防拉伸）
+     ──────────────────────────────────────────────────────────────
+     問題：html2canvas 1.4.1 的 renderReplacedElement 是
+       drawImage(img, 0,0, 原圖寬,原圖高, box.left,box.top, box.寬,box.高)
+     ——把整張原圖硬塞進 <img> 的 content box，object-fit 完全不看。
+     所以只要「容器比例 ≠ 原圖比例」，預覽正常但匯出就會被拉伸。
+
+     解法：讓 <img> 自己的盒子就等於 contain 後的精確比例，
+     object-fit 變成 no-op，預覽與匯出必然一致。
+
+     ⚠️ 三個必要條件（少一個就會復發）：
+     1. 一律用 setProperty(..., 'important')。config.css 對 LOGO 容器
+        下了 width/height !important，普通 inline 樣式會被 author
+        !important 蓋掉（CSS 層疊規則），改容器尺寸的做法完全無效。
+     2. 補 margin-top 垂直置中。HTML 上是 object-position:left center，
+        預覽是置中的；只縮盒子不補 offset 會貼齊容器頂端
+        （SBD 容器 42px vs 圖片實際 32px → 明顯偏上）。
+     3. SBD 切換後必須重算。容器尺寸會變（317×36 ↔ 280×38），
+        圖片沒重載所以 naturalWidth 還在，但舊的 inline 寬度會超出
+        新容器，被 overflow:hidden 裁掉。故自然尺寸要快取進 dataset。
+     ────────────────────────────────────────────────────────────── */
+  var LOGO_FIT_SEL = '.蝦導播官方LOGO, .蝦導播官方LOGO_SBD';
+
+  function _fitLogoImg(img) {
+    if (!img) return;
+
+    /* 自然尺寸快取：SBD 切換時容器變了但圖沒重載，
+       沒有快取就無法在 load 事件之外重算 */
+    var natW = img.naturalWidth  || parseFloat(img.dataset.bnNatW) || 0;
+    var natH = img.naturalHeight || parseFloat(img.dataset.bnNatH) || 0;
+    if (!natW || !natH) return; /* 尚未載入完成，等 load 事件再來 */
+    img.dataset.bnNatW = String(natW);
+    img.dataset.bnNatH = String(natH);
+
+    /* 容器：公版 LOGO 的父層是 .蝦導播LOGO範圍，
+       SBD 限定 LOGO 的父層是 .SBD_LOGO範圍，一律取直接父元素 */
+    var host = img.parentElement;
+    if (!host) return;
+    var hcs   = window.getComputedStyle(host);
+    var hostW = parseFloat(hcs.width)  || 0;
+    var hostH = parseFloat(hcs.height) || 0;
+    if (!hostW || !hostH) return;
+
+    /* contain：等比縮到完整放進容器（與預覽的 object-fit:contain 同結果）*/
+    var scale = Math.min(hostW / natW, hostH / natH);
+    var w = Math.round(natW * scale);
+    var h = Math.round(natH * scale);
+
+    img.style.setProperty('width',  w + 'px', 'important');
+    img.style.setProperty('height', h + 'px', 'important');
+    /* 垂直置中補償（對齊 object-position:...center 的預覽結果）；
+       h + marginTop ≤ hostH，不會被 overflow:hidden 裁到 */
+    img.style.setProperty('margin-top', Math.round((hostH - h) / 2) + 'px', 'important');
+    /* 水平維持靠左（對齊 object-position:left...）*/
+    img.style.setProperty('margin-left', '0', 'important');
+    /* 盒子比例已等於原圖比例，object-fit 此時是 no-op，留著讓預覽一致 */
+    img.style.setProperty('object-fit', 'contain', 'important');
+  }
+
+  /* 重算全部蝦導播 LOGO（公版 + SBD 限定）。
+     首次呼叫時掛上常駐 load 監聽，之後換圖（橘/白、紅/白）自動重算。 */
+  function _fitAllLogoImgs() {
+    document.querySelectorAll(LOGO_FIT_SEL).forEach(function (img) {
+      if (img.dataset.bnFitBound !== '1') {
+        img.dataset.bnFitBound = '1';
+        img.addEventListener('load', function () { _fitLogoImg(img); });
+      }
+      _fitLogoImg(img);
+    });
   }
 
   window.addEventListener('message', function(e) {
@@ -600,7 +676,10 @@
        支援直式版位自訂 LOGO：config.css 可宣告
          --shopee-logo-orange: "../img/蝦導播logo_直式_橘.png"
          --shopee-logo-white:  "../img/蝦導播logo_直式_白.png"
-       未宣告時 fallback 到 e.data.src（系統預設橫式 LOGO）*/
+       未宣告時 fallback 到 e.data.src（系統預設橫式 LOGO）
+       ★ 修正 html2canvas 不支援 object-fit 的拉伸問題：
+         圖片載完後讀 naturalWidth/naturalHeight，計算真實 contain 尺寸，
+         手動設定精確 px 寬高，不再依賴 CSS object-fit*/
     if (e.data.type === 'bn-shopee-logo') {
       var rootCsLogo = getComputedStyle(document.documentElement);
 
@@ -632,6 +711,10 @@
           el.style.display = 'block';
         });
       }
+
+      /* ★ 換圖後重算等比尺寸（防 html2canvas 匯出拉伸）。
+         換的圖若尚在載入，常駐 load 監聽會再補算一次。 */
+      _fitAllLogoImgs();
       /* 分隔線：與 LOGO 同色
          公版：白色LOGO → 白分隔線 / 橘色LOGO → 蝦皮橘分隔線
          SBD模式：白色LOGO → 白分隔線 / 紅色LOGO → #d0011c
@@ -1590,6 +1673,12 @@
     if (!pzone) return;
     document.body.classList.toggle('sbd-mode', !!toSbd);
 
+    /* ★ 蝦導播 LOGO 重算等比：SBD 切換會換掉 LOGO 容器尺寸
+       （公版 317×38 ↔ SBD 280×38，SBD 限定 LOGO 由 none 轉 block），
+       舊的 inline 尺寸留著會超出新容器被 overflow:hidden 裁掉。
+       放在 classList.toggle 後面第一行，確保不被下方的 early return 跳過。 */
+    _fitAllLogoImgs();
+
     var target = getProdZone(); /* 依切換後的新狀態，算出正確的目的容器 */
     if (!target) return;
 
@@ -2295,6 +2384,11 @@ function _applyCompose(rawPreset, opts) {
   function doCapture(cb){
     var cv=document.getElementById('canvas');
     if(!cv){if(cb)cb(null);return;}
+
+    /* ★ 匯出前最後一道保險：重算蝦導播 LOGO 等比尺寸。
+       html2canvas 不看 object-fit，會把原圖硬塞進 <img> 的 box，
+       所以 box 比例必須先校正好，否則匯出圖上的 LOGO 會被拉伸。 */
+    _fitAllLogoImgs();
 
     /* 讀取 KB 上限（config.css 的 --max-kb，單位 KB，0 = 無限制）*/
     var maxKb = parseFloat(
