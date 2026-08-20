@@ -753,6 +753,11 @@
       var curH = parseFloat(box.style.height) || box.offsetHeight || 100;
       box.style.width = Math.round(curH * newRatio) + 'px';
       box.dataset.ratio = String(newRatio);
+      /* ★ 這一行就是幾何變動,必須「當下」補一次重繪 —— 不能只倚賴下面那個非同步 .then():
+         src 才剛被換掉,imgEl.complete 立刻變 false → registerProduct 會走 onload 分支,
+         等新圖 decode 完才 resolve。這中間商品已經變寬、舊寬度的陰影卻還留在畫布上。
+         兩次重繪職責不同:這次補「幾何變了」,下面那次補「輪廓變了」。 */
+      _bnRedrawShadowScene();
       /* 圖片換了，輪廓/去背也要重新註冊，否則陰影還是舊形狀 */
       if (imgEl && typeof window.ShadowPlugin !== 'undefined') {
         window.ShadowPlugin.registerProduct(e.data.id, imgEl).then(_bnRedrawShadowScene);
@@ -769,37 +774,56 @@
        註:本批為「即時套用顯示」,尚未回報 parent 持久化(重建後不保留),故不觸發
        postLayoutChange、無迴圈之虞;持久化 + silent 旗標為後續步驟。 */
     if (e.data.type === 'bn-coedit-apply') {
-      var czone = getProductZone();
+      /* ★ 座標系必須分成兩套(2026-08 修正):
+         人物永遠掛在 .商品範圍;商品在 SBD 模式下掛在白框(.bn-kv-frame)。
+         style.left/top 是相對「各自的 offsetParent」,dataset.*Pct 的分母也必須是同一個容器
+         —— 因為之後 applyManualProductPositions() 是用 getProdZone()(SBD=白框)去還原的。
+         舊版商品也用 .商品範圍 當基準與分母,於是切換模式時 _applyPct 會用
+         「白框寬 × 商品範圍算出來的 pct」還原 → 寬高各自乘上不同的縮放係數 →
+         box 長寬比脫離原圖比例。<img> 是 object-fit:contain,會維持比例縮小置中;
+         但陰影是拿 box 的 rect 把輪廓拉伸填滿整個 box、地平線錨在 box 底緣 →
+         影子比商品寬、下方還多出一截,看起來就像「共編過的商品切模式後有殘影」。 */
+      var czone = getProductZone();               /* 人物容器(也是公版模式下的商品容器) */
       if (!czone) return;
+      var dzone = getProdZone() || czone;         /* 商品容器:SBD=白框,公版=同 czone */
       var citems = Array.isArray(e.data.items) ? e.data.items : [];
-      var zw = czone.offsetWidth || parseFloat(czone.style.width) || 0;
-      var zh = czone.offsetHeight || parseFloat(czone.style.height) || 0;
-      if (zw <= 0 || zh <= 0) return;                       /* 容器尺寸未就緒,防呆 */
       /* ★ 映射策略:一般版位 = 共編方形以 side=min(寬,高) 等比 fit、置中(既有行為,逐字不變)。
          寬/小範位(zw/zh ≥ WIDE_FIT_RATIO,如直播大廳超扁)改用 bbox-fit:把「隊形實際外框」
          保持比例撐大到填滿商品範圍、置中,避免只用到短邊而物件特別小。
          M = 每單位(共編 0..1)對應的 px;一般版位 M=side,寬版位 M=填滿尺度。 */
       var WIDE_FIT_RATIO = 1.3;                 /* 命中直播大廳(480/337≈1.42);其餘(≤1.10)走原路徑不變 */
-      var wide = (zw / zh) >= WIDE_FIT_RATIO;
-      var M, offX = 0, offY = 0, bboxCX = 0, bboxCY = 0;
-      if (wide) {
-        var bxMin = Infinity, bxMax = -Infinity, byMin = Infinity, byMax = -Infinity;
-        citems.forEach(function (it) {
-          var w = parseFloat(it.wRel) || 0.2, h = parseFloat(it.hRel) || 0.3;
-          var xr = parseFloat(it.cx); if (isNaN(xr)) xr = 0.5;
-          var yr = parseFloat(it.cy); if (isNaN(yr)) yr = 0.5;
-          if (xr - w / 2 < bxMin) bxMin = xr - w / 2;
-          if (xr + w / 2 > bxMax) bxMax = xr + w / 2;
-          if (yr - h / 2 < byMin) byMin = yr - h / 2;
-          if (yr + h / 2 > byMax) byMax = yr + h / 2;
-        });
-        var bW = Math.max(bxMax - bxMin, 0.01), bH = Math.max(byMax - byMin, 0.01);  /* 防除以 0 */
-        M = Math.min(zw / bW, zh / bH) * 0.96;   /* 保比例填滿、留 4% 邊距不貼邊 */
-        bboxCX = (bxMin + bxMax) / 2; bboxCY = (byMin + byMax) / 2;
-      } else {
-        M = Math.min(zw, zh);                     /* 原 side */
-        offX = (zw - M) / 2; offY = (zh - M) / 2;
+      /* 依容器算出一整組映射參數。公版模式下商品與人物共用同一個容器 → 共用同一份,
+         行為與修改前逐位元相同(零回歸);只有 SBD 才會產生第二份。 */
+      function _coeditMap(zone) {
+        var zw = zone.offsetWidth || parseFloat(zone.style.width) || 0;
+        var zh = zone.offsetHeight || parseFloat(zone.style.height) || 0;
+        if (zw <= 0 || zh <= 0) return null;                /* 容器尺寸未就緒,防呆 */
+        var wide = (zw / zh) >= WIDE_FIT_RATIO;
+        var M, offX = 0, offY = 0, bboxCX = 0, bboxCY = 0;
+        if (wide) {
+          var bxMin = Infinity, bxMax = -Infinity, byMin = Infinity, byMax = -Infinity;
+          citems.forEach(function (it) {
+            var w = parseFloat(it.wRel) || 0.2, h = parseFloat(it.hRel) || 0.3;
+            var xr = parseFloat(it.cx); if (isNaN(xr)) xr = 0.5;
+            var yr = parseFloat(it.cy); if (isNaN(yr)) yr = 0.5;
+            if (xr - w / 2 < bxMin) bxMin = xr - w / 2;
+            if (xr + w / 2 > bxMax) bxMax = xr + w / 2;
+            if (yr - h / 2 < byMin) byMin = yr - h / 2;
+            if (yr + h / 2 > byMax) byMax = yr + h / 2;
+          });
+          var bW = Math.max(bxMax - bxMin, 0.01), bH = Math.max(byMax - byMin, 0.01);  /* 防除以 0 */
+          M = Math.min(zw / bW, zh / bH) * 0.96;   /* 保比例填滿、留 4% 邊距不貼邊 */
+          bboxCX = (bxMin + bxMax) / 2; bboxCY = (byMin + byMax) / 2;
+        } else {
+          M = Math.min(zw, zh);                     /* 原 side */
+          offX = (zw - M) / 2; offY = (zh - M) / 2;
+        }
+        return { zone: zone, zw: zw, zh: zh, wide: wide, M: M,
+                 offX: offX, offY: offY, bboxCX: bboxCX, bboxCY: bboxCY };
       }
+      var pMap = _coeditMap(czone);
+      var dMap = (dzone === czone) ? pMap : _coeditMap(dzone);
+      if (!pMap || !dMap) return;
       var isAll = e.data.mode === 'all';
       citems.forEach(function (it) {
         var cbox = it.kind === 'person'
@@ -816,6 +840,10 @@
         var isProtected = !isAll && cbox.dataset.userMoved === '1' && cbox.dataset.coeditApplied !== '1';
         if (isProtected) return;                              /* 手動微調版位:整顆略過 */
 
+        /* ★ 依物件實際掛載的容器選用對應的映射(人物=商品範圍、商品=SBD 白框/商品範圍) */
+        var mp = (it.kind === 'person') ? pMap : dMap;
+        var M = mp.M, zw = mp.zw, zh = mp.zh, wide = mp.wide;
+        var offX = mp.offX, offY = mp.offY, bboxCX = mp.bboxCX, bboxCY = mp.bboxCY;
         var ow = (parseFloat(it.wRel) || 0.2) * M;
         var oh = (parseFloat(it.hRel) || 0.3) * M;
         cbox.style.width  = Math.round(ow) + 'px';
@@ -841,7 +869,8 @@
         }
         cbox.dataset.userMoved = '1';                         /* 共編位置=手動指定,脫離自動構圖 */
         cbox.dataset.coeditApplied = '1';                     /* ★#3 標記共編套出(供下輪 safe 可再更新;手動一動即清) */
-        /* 持久化:pct 相對商品範圍容器,回報 parent(重建後還原) */
+        /* 持久化:pct 相對「該物件自己的容器」(人物=商品範圍、商品=SBD 白框/商品範圍),
+           與 applyManualProductPositions() 的還原基準同源,回報 parent(重建後還原) */
         var flL = parseFloat(cbox.style.left) || 0, flT = parseFloat(cbox.style.top) || 0;
         var flW = parseFloat(cbox.style.width) || 0, flH = parseFloat(cbox.style.height) || 0;
         cbox.dataset.leftPct   = flL / zw; cbox.dataset.topPct    = flT / zh;
@@ -1172,10 +1201,15 @@
           var mW    = personData.widthPct  * zw;
           var mH    = personData.heightPct * zh;
           if ([mLeft, mTop, mW, mH].every(isFinite)) {
-            leftPx = Math.round(mLeft);
-            topPx  = Math.round(mTop);
-            wPx    = Math.round(mW);
-            hPx    = Math.round(mH);
+            /* ★ 長寬比守恆:同 _applyPct 的理由(見 _bnFitToRatio)。人物 box 也是
+               object-fit:contain,比例一歪,匯出時就會被 html2canvas 拉伸。
+               這裡的 ratio 就是下方寫進 dataset.ratio 的那一份,同源。
+               ★ 錨在「底部中心」:人物是站在地面上的,底邊不能動。 */
+            var pf = _bnFitToRatio(mW, mH, ratio);
+            leftPx = Math.round(mLeft + (mW - pf.w) / 2);
+            topPx  = Math.round(mTop  + (mH - pf.h));
+            wPx    = Math.round(pf.w);
+            hPx    = Math.round(pf.h);
           }
         }
         var box = document.createElement('div');
@@ -1504,6 +1538,46 @@
     _bnRedrawShadowScene();
   }
 
+  /* ══ 盒子長寬比守恆(單一權威)════════════════════════════════════════
+     全域不變式:商品/人物 box 的長寬比 === dataset.ratio(原圖比例)。
+     建立(layoutProducts)、四角縮放(bh = w / r)、共編套用(寬高共用同一個 M)
+     三條路徑都遵守它;唯獨「用百分比還原尺寸」會破壞它 —— 因為
+     w = widthPct × 容器寬、h = heightPct × 容器高 是【兩個各自獨立的乘數】。
+
+     公版容器(.商品範圍)與 SBD 容器(.bn-kv-frame)的長寬比不同,實測:
+       直播大廳   480x337(1.424) → 378.73x220.96(1.714)  歪 1.20 倍
+       直播時縮圖 480x440(1.091) → 336.82x250.42(1.345)  歪 1.23 倍
+       IG        888x917(0.968) → 576.89x481.35(1.199)  歪 1.24 倍
+       FB_POST   549x623(0.881) → 440.68x363.90(1.211)  歪 1.37 倍
+     pct 只有一份、不分模式,所以每切一次模式,userMoved 的 box 就被拉寬
+     (公版→SBD)或拉高(SBD→公版)。
+
+     後果【只有陰影看得出來】:<img> 是 object-fit:contain,會維持比例縮小
+     置中自救;但 _bnRedrawShadowScene() 是拿 box 的 rect 當 w/h、拿 box 底緣
+     當地平線,ShadowPlugin 再把輪廓拉伸填滿整個 box → 影子比商品寬、
+     或整個掉到商品下方 = 使用者回報的「切模式後有殘影」。
+     ★ 補再多次 _bnRedrawShadowScene() 都沒用:畫出來的是「正確地畫出一個
+       本身就錯的 box」。這不是重繪時序問題,別再往那個方向找。
+     ★ 也解釋了「縮放一下就好」:四角縮放強制 bh = w / r,一碰就把長寬比
+       拉回原圖比例。純平移同樣會重繪卻修不好 —— 因為它不改 w/h。
+
+     修法:保留 pct 算出來的【面積】,把長寬比強制拉回 dataset.ratio。
+     取面積(幾何平均)而非單取寬或單取高,理由:
+       · 同模式內(容器沒換)zw/zw0 === zh/zh0 → 本函式數學上【恆等於輸入】,
+         拖曳/縮放/構圖/共編/Undo/暫存還原全部零回歸,連 1px 都不會動。
+       · 跨模式時取兩個縮放係數的幾何平均,不偏向寬也不偏向高,
+         不會像「只用寬」那樣在變矮的 SBD 白框裡爆出去。
+     ratio 取不到(舊資料/尚未載入)就【原樣回傳】,不硬猜、不製造新災情。 */
+  function _bnFitToRatio(w, h, ratio) {
+    var r = parseFloat(ratio);
+    if (!isFinite(r) || r <= 0) return { w: w, h: h };
+    if (!isFinite(w) || !isFinite(h) || w <= 0 || h <= 0) return { w: w, h: h };
+    var nh = Math.sqrt((w * h) / r);   /* 面積守恆 + 長寬比 = r 的唯一解 */
+    var nw = nh * r;
+    if (!isFinite(nw) || !isFinite(nh) || nw <= 0 || nh <= 0) return { w: w, h: h };
+    return { w: nw, h: nh };
+  }
+
   function applyManualProductPositions(prodZone) {
     if (!prodZone) return;
     function _applyPct(zone, selector){
@@ -1521,6 +1595,15 @@
         var w = parseFloat(box.dataset.widthPct)  * zw;
         var h = parseFloat(box.dataset.heightPct) * zh;
         if (![l,t,w,h].every(isFinite)) return;
+        /* ★ 長寬比守恆:pct 只有一份、不分模式,而公版與 SBD 的容器長寬比不同,
+           寬高各乘一個係數會把 box 拉歪 → 陰影跟商品分家。詳見 _bnFitToRatio。 */
+        var fit = _bnFitToRatio(w, h, box.dataset.ratio);
+        /* ★ 尺寸被修正後以「底部中心」為錨點回推 left/top:
+           底邊既是陰影的地平線、也是商品站立的位置,跨模式時保持它不動最直覺。
+           同模式下 fit 恆等 → 兩個補償量皆為 0,left/top 逐位元不變(零回歸)。 */
+        l += (w - fit.w) / 2;
+        t += (h - fit.h);
+        w = fit.w; h = fit.h;
         box.style.left   = Math.round(l) + 'px';
         box.style.top    = Math.round(t) + 'px';
         box.style.width  = Math.round(w) + 'px';
@@ -1789,12 +1872,13 @@
   }
 
   var _bnShadowRedrawScheduled = false;
-  function _bnRedrawShadowScene(){
-    if (typeof window.ShadowPlugin === 'undefined') return;
-    if (_bnShadowRedrawScheduled) return;
-    _bnShadowRedrawScheduled = true;
-    requestAnimationFrame(function(){
-      _bnShadowRedrawScheduled = false;
+  var _bnShadowRafId = 0;
+  var _bnShadowWatchArmed = false;
+  var _bnShadowWatchSuspended = false;
+
+  /* ★ 真正的量測 + 繪製(單一權威)。非同步(rAF)與同步(Sync)兩條路都呼叫這裡,
+     確保「預覽看到的」與「匯出烤進去的」永遠是同一段程式碼算出來的。 */
+  function _bnDrawShadowSceneNow(){
       var cv = _bnShadowCanvas();
       if (!cv) return;
       var ctx = cv.getContext('2d');
@@ -1845,9 +1929,140 @@
       }
       window.ShadowPlugin.renderScene(ctx, items);
       if (clipped) ctx.restore();
+
+      /* ★ 第一次成功繪製之後才掛 Observer:此刻 #canvas 與商品 box 都確定存在,
+         不必去動 init 或 script 載入順序(本專案的載入順序是有契約的)。 */
+      if (!_bnShadowWatchArmed) { _bnShadowWatchArmed = true; _bnWatchProdBoxes(); }
+  }
+
+  function _bnRedrawShadowScene(){
+    if (typeof window.ShadowPlugin === 'undefined') return;
+    if (_bnShadowRedrawScheduled) return;
+    _bnShadowRedrawScheduled = true;
+    _bnShadowRafId = requestAnimationFrame(function(){
+      _bnShadowRedrawScheduled = false;
+      _bnShadowRafId = 0;
+      _bnDrawShadowSceneNow();
     });
   }
-  window._bnRedrawShadowScene = _bnRedrawShadowScene;
+
+  /* ★ 同步重繪:給「下一行就必須是正確像素」的場合(目前唯一呼叫端是 doCapture)。
+     html2canvas 是同步開始遍歷 DOM 的,若這時陰影還排在 rAF 佇列裡,
+     它讀到的就會是上一幀的陰影 → 匯出圖的影子對不上商品。
+     順手取消已排程的那一趟,避免同一幀畫兩次。 */
+  function _bnRedrawShadowSceneSync(){
+    if (typeof window.ShadowPlugin === 'undefined') return;
+    if (_bnShadowRafId) { cancelAnimationFrame(_bnShadowRafId); _bnShadowRafId = 0; }
+    _bnShadowRedrawScheduled = false;
+    _bnDrawShadowSceneNow();
+  }
+  window._bnRedrawShadowScene     = _bnRedrawShadowScene;
+  window._bnRedrawShadowSceneSync = _bnRedrawShadowSceneSync;
+
+  /* ══ 陰影自動重繪守衛(Observer)══════════════════════════════════════
+     ★ 定位:這是【安全網】,不是唯一權威。既有的顯式 _bnRedrawShadowScene()
+       呼叫【一律保留】,三條硬理由(不要因為「看起來重複」就刪):
+       1. 有些必須重繪的事件【完全沒有 DOM 足跡】,Observer 物理上看不到:
+          · 換陰影顏色 → setShadowColorRGB() 只重算記憶體裡的 tinted canvas。
+          · registerProduct(...).then(重繪) → 圖載完才建出輪廓,src 早就設好了。
+       2. Observer 是非同步交付(microtask);顯式呼叫是當下同步排 rAF。
+          拖曳這種每幀要跟手的路徑,靠顯式呼叫才不會慢一拍。
+       3. 沒有 Observer 的環境行為 === 目前行為,天然向下相容。
+     ★ 兩者共用同一個 rAF 旗標,重複觸發每幀最多只畫一次 → 疊加成本≈0。
+     ★ 本守衛【修不好】「切模式後陰影對不上」那個 bug —— 那是 box 幾何本身
+       就錯了(見 _bnFitToRatio),不是漏重繪。它防的是【未來】有人新增一條
+       改幾何的路徑卻忘記呼叫重繪。 */
+  var _bnShadowMO     = null;   /* per-box:位移/尺寸/旋轉/z-index */
+  var _bnShadowTreeMO = null;   /* #canvas childList:商品增刪、切模式搬容器 */
+  var _bnShadowRO     = null;   /* per-box:CSS 驅動的尺寸變化(第二層保險) */
+
+  /* ★ Observer 自我觸發防護(必須):_bnShadowCanvas() 每次重繪都可能
+     (a) insertBefore 陰影層 → #canvas 的 childList 變動
+     (b) 指派 cv.width/height → canvas 的 attribute 變動
+     另外把「純編輯器 UI」(四角把手 data-corner、旋轉把手、群組錨點框
+     data-no-capture)一併排除 —— 它們的 show/hide 完全不影響幾何。 */
+  function _bnShadowIgnorableNode(n) {
+    if (!n || n.nodeType !== 1) return true;                                       /* 文字節點等 */
+    if (n.classList && n.classList.contains('bn-shadow-scene-layer')) return true; /* 陰影層自己 */
+    if (n.classList && n.classList.contains('bn-rot-handle')) return true;
+    if (n.dataset && (n.dataset.noCapture === 'true' || n.dataset.corner)) return true;
+    return false;
+  }
+  function _bnShadowMutMeaningful(muts) {
+    for (var i = 0; i < muts.length; i++) {
+      var m = muts[i], j, real = 0;
+      if (m.type === 'childList') {
+        for (j = 0; j < m.addedNodes.length;   j++) if (!_bnShadowIgnorableNode(m.addedNodes[j]))   real++;
+        for (j = 0; j < m.removedNodes.length; j++) if (!_bnShadowIgnorableNode(m.removedNodes[j])) real++;
+        if (real === 0) continue;   /* 這筆只有陰影層/編輯器 UI 進出 → 忽略,切斷自我觸發 */
+        return true;
+      }
+      if (_bnShadowIgnorableNode(m.target)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /* 重新綁定 per-box 觀察。
+     ★ box 被 remove() 後不需要手動 unobserve:註冊掛在節點上,節點沒人參照就會
+       連同註冊一起被回收。每次 childList 變動整批重掛最單純也不會漏,
+       畫布上最多 3 顆商品,成本可忽略。
+     ★ RO/MO 觀察的是【元素本身】,不是它在樹上的位置 —— 切模式時 box 被
+       appendChild 到白框,觀察【不會】失效,這裡重掛只是為了收進新增的 box。 */
+  function _bnRewatchBoxes() {
+    var boxes = queryAllProdBox();
+    if (_bnShadowMO) {
+      _bnShadowMO.disconnect();
+      Array.prototype.forEach.call(boxes, function (b) {
+        _bnShadowMO.observe(b, {
+          attributes: true,
+          /* subtree 是為了收到 rotate-plugin 寫在內層 <img> 的 style.transform —— 外層
+             box 保持軸對齊、rect 不變,那是陰影唯一能得知「商品轉了」的訊號。 */
+          subtree: true,
+          /* style = left/top/width/height/z-index/display;
+             data-rot / data-shadow-scale-* 是繪製時直接讀的陰影參數。 */
+          attributeFilter: ['style', 'data-rot', 'data-shadow-scale-x', 'data-shadow-scale-y']
+        });
+      });
+    }
+    if (_bnShadowRO) {
+      try { _bnShadowRO.disconnect(); } catch (e) {}
+      Array.prototype.forEach.call(boxes, function (b) { _bnShadowRO.observe(b); });
+    }
+  }
+
+  function _bnWatchProdBoxes() {
+    var canvasEl = getCanvasEl();
+    if (!canvasEl || !window.MutationObserver) return;   /* 無 MO → 全靠顯式呼叫,等同現狀 */
+
+    /* ★ tree MO 掛在 #canvas 而不是「當下的商品容器」:#canvas 是 .商品範圍 與
+       .bn-kv-frame 的共同祖先且永遠不會被換掉,所以切模式時【不需要】重新掛載。 */
+    if (!_bnShadowTreeMO) {
+      _bnShadowTreeMO = new MutationObserver(function (muts) {
+        if (_bnShadowWatchSuspended) return;
+        if (!_bnShadowMutMeaningful(muts)) return;
+        _bnRewatchBoxes();          /* box 集合可能變了 → 重新綁定 */
+        _bnRedrawShadowScene();
+      });
+      _bnShadowTreeMO.observe(canvasEl, { childList: true, subtree: true });
+    }
+    if (!_bnShadowMO) {
+      _bnShadowMO = new MutationObserver(function (muts) {
+        if (_bnShadowWatchSuspended) return;
+        if (!_bnShadowMutMeaningful(muts)) return;
+        _bnRedrawShadowScene();
+      });
+    }
+    /* ResizeObserver:Chrome 64+/Edge 79+;沒有就跳過(MO 已覆蓋所有 inline style
+       路徑,RO 只是 CSS 驅動尺寸變化的第二層保險)。 */
+    if (!_bnShadowRO && window.ResizeObserver) {
+      _bnShadowRO = new ResizeObserver(function () {
+        if (_bnShadowWatchSuspended) return;
+        _bnRedrawShadowScene();
+      });
+    }
+    _bnRewatchBoxes();
+  }
 
   /* ════════════════════════════════════════════════════════════
      SBD 構圖模式 — KV 視覺白框引擎（v2：改為整張裝飾圖片方案）
@@ -3315,11 +3530,22 @@ function _applyCompose(rawPreset) {
       getComputedStyle(document.documentElement).getPropertyValue('--max-kb')||'') || 0;
     var TARGET_BYTES = maxKb > 0 ? maxKb * 1024 : 0;
 
+    /* ★ 匯出期間停掉陰影 Observer:下面兩個 helper 都會寫 inline style,
+       會被 Observer 當成幾何變動而排一趟 rAF;但 html2canvas 是非同步的,
+       那一趟很可能落在「它已經開始遍歷 DOM」之後 → 順序不可預期。
+       停用 → 同步畫一次 → 拍完再打開,是唯一可預期的順序。
+       (字體 gate 的遞迴 return 在這一行之前,所以不會漏掉還原。) */
+    _bnShadowWatchSuspended = true;
+
     /* ★ 轉存前隱藏選取 UI(外框 + 群組錨點框),避免烤進輸出圖;then/catch 都還原 */
     var _restoreSel = _hideSelUIForCapture();
     /* ★ 人物/商品圖等比校正(Bug 2.1)。同樣 then/catch 都必須還原 ——
        這個「只在截圖當下套用」是刻意的,原因見 _fitBoxImgsForCapture() 上方註解。 */
     var _restoreBoxFit = _fitBoxImgsForCapture();
+
+    /* ★ 用【同步】版本:下一行 html2canvas 就要讀這張 canvas 的像素,等不到 rAF。
+       上面兩個 helper 剛動過 DOM,若此刻有一趟 rAF 還沒執行,匯出圖會烤到上一幀的陰影。 */
+    _bnRedrawShadowSceneSync();
 
     html2canvas(cv,{scale:1,useCORS:true,allowTaint:true,backgroundColor:null,
       width:parseFloat(cv.style.width)||cv.offsetWidth,
@@ -3331,6 +3557,7 @@ function _applyCompose(rawPreset) {
     .then(function(c){
       _restoreBoxFit();
       _restoreSel();
+      _bnShadowWatchSuspended = false;   /* ★ 還原 Observer */
       /* Base64 大小估算（省去 header 後 × 0.75）*/
       function getBytes(url){
         var hdr = 'data:image/jpeg;base64,';
@@ -3361,7 +3588,9 @@ function _applyCompose(rawPreset) {
       }
       if(cb) cb(bestUrl);
     })
-    .catch(function(){ _restoreBoxFit(); _restoreSel(); if(cb)cb(null); });
+    /* ★ catch 也必須還原 _bnShadowWatchSuspended,否則匯出失敗一次,
+       陰影守衛就永久失效(比照 _restoreBoxFit/_restoreSel 的既有模式)。 */
+    .catch(function(){ _restoreBoxFit(); _restoreSel(); _bnShadowWatchSuspended = false; if(cb)cb(null); });
   }
 
   /**

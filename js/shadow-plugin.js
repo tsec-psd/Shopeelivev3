@@ -106,8 +106,14 @@ window.ShadowPlugin = (function () {
         tintProduct(id);
         resolve(products[id]);
       }
-      if (imgEl.complete && imgEl.naturalWidth) build();
-      else imgEl.onload = build;
+      if (imgEl.complete && imgEl.naturalWidth) { build(); return; }
+      /* ★ 用 addEventListener({once:true}) 而非 imgEl.onload=build:
+         直接賦值會覆蓋掉別人掛在同一張 img 上的 onload,而且用完不會自己清掉。
+         ★ 必須一併處理 onerror:呼叫端是 registerProduct(...).then(_bnRedrawShadowScene),
+         載入失敗若不 settle,這個 promise 就永遠掛著 → 陰影再也不會重繪 = 永久殘影。
+         失敗時 resolve(null),讓呼叫端照常跑重繪(該商品沿用上一次的輪廓或不畫)。 */
+      imgEl.addEventListener('load',  build, { once: true });
+      imgEl.addEventListener('error', function () { resolve(null); }, { once: true });
     });
   }
 

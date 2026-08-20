@@ -1771,7 +1771,12 @@
         var order = (window._bnProducts||[]).slice().sort(function(a,b){
           return (a.zOrder||0)-(b.zOrder||0);
         }).map(function(p){ return p.id; });
-        broadcast({type:'bn-product-order', order:order});
+        /* ★ 訊息名修正:全專案沒有任何地方監聽 'bn-product-order',
+           iframe 端的 handler 是 'bn-product-zorder'(layout-runtime.js) → 這行原本是空包彈,
+           暫存還原/Undo 重播後 z-index 不會被還原。連帶影響陰影:
+           _bnRedrawShadowScene() 是依 z-index 由小到大排序決定遮擋順序的。
+           payload 的組法(上方 sort/map)與 broadcastZOrder() 逐字相同,改名即等價,無反轉風險。 */
+        broadcast({type:'bn-product-zorder', order:order});
         /* 每個 iframe 有自己獨立的 ShadowPlugin 實例，還原/重播時要重新告知光源角度 */
         broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle||'left'});
 
