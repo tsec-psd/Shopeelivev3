@@ -25,9 +25,9 @@
   global.BN_POSITIONS = {
     "FB_POST": {
       normal: {
-        "1人2品": { persons: [{ x:0, bottom:0, h:80 }], prods: [{ x:65, y:30, h:50, bw:44, z:10 }, { x:88, y:50, h:37, bw:26, z:14 }] },
+        "1人2品": { persons: [{ x:0, bottom:0, h:80 }], prods: [{ x:55, y:30, h:50, bw:44, z:10 }, { x:82, y:50, h:37, bw:26, z:14 }] },
         "2人": { persons: [{ x:0, bottom:-1, h:82 }, { x:39, bottom:-1, h:82 }], prods: [] },
-        "2人2品": { persons: [{ x:0, bottom:0, h:67 }, { x:26, bottom:0, h:67 }], prods: [{ x:77, y:30, h:23, bw:25, z:10 }, { x:88, y:44, h:23, bw:26, z:14 }] },
+        "2人2品": { persons: [{ x:0, bottom:0, h:67 }, { x:26, bottom:0, h:67 }], prods: [{ x:73, y:30, h:23, bw:25, z:10 }, { x:84, y:44, h:23, bw:26, z:14 }] },
         "1人1品": { persons: [{ x:0, bottom:0, h:80  }], prods: [{ x:71, y:48, h:61, bw:50, z:10}] }
       },
       sbd: {
@@ -45,7 +45,7 @@
         "1人1品": { persons: [{ x:0, bottom:-1, h:90 }], prods: [{ x:77, y:23, h:40, bw:41, z:10 }] }
       },
       sbd: {
-        "1人2品": { persons: [{ x:0, bottom:-1, h:77 }], prods: [{ x:47, y:32, h:50, bw:42, z:10 }, { x:74, y:64, h:56, bw:46, z:14 }] },
+        "1人2品": { persons: [{ x:0, bottom:-1, h:77 }], prods: [{ x:47, y:32, h:50, bw:42, z:10 }, { x:70, y:64, h:56, bw:46, z:14 }] },
         "2人": { persons: [{ x:5, bottom:0, h:95 }, { x:15, bottom:0, h:95 }], prods: [] },
         "2人2品": { persons: [{ x:0, bottom:0, h:90 }, { x:30, bottom:0, h:90 }], prods: [{ x:70, y:25, h:28, bw:44, z:10 }, { x:90, y:40, h:25, bw:26, z:14 }] },
         "1人1品": { persons: [{  x:0, bottom:-1, h:77 }], prods: [{ x:61, y:49, h:72, bw:60, z:10 }] }
@@ -67,7 +67,7 @@
     },
     "直播時縮圖": {
       normal: {
-        "1人2品": { persons: [{ x:5, bottom:0, h:95 }], prods: [{ x:65, y:20, h:37, bw:44, z:10 }, { x:90, y:30, h:35, bw:26, z:14 }] },
+        "1人2品": { persons: [{ x:5, bottom:0, h:95 }], prods: [{ x:62, y:20, h:37, bw:44, z:10 }, { x:83, y:30, h:35, bw:26, z:14 }] },
         "2人": { persons: [{  x:0, bottom:-4, h:103 }, { x:36, bottom:-3, h:103 }], prods: [] },
         "2人2品": { persons: [{ x:0, bottom:0, h:90 }, { x:25, bottom:0, h:90 }], prods: [{ x:80, y:20, h:24, bw:22, z:10 }, { x:91, y:33, h:23, bw:21, z:14 }] },
         "1人1品": { persons: [{ x:0, bottom:-6, h:106 }], prods: [{  x:78, y:23, h:41, bw:37, z:10 }] }

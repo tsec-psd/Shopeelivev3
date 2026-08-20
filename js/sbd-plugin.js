@@ -567,7 +567,26 @@
          setMode() 只負責切模式，不包含這兩塊資料 */
       if (_sbdMode === 'sbd' && _sbdKvSrc) {
         broadcastToAll({ type: 'bn-kv-image', src: _sbdKvSrc });
+        /* ★ 2026-08:改為【逐版位】送,而不是只送 _kvTransformPerId 有記錄的那些。
+           原本漏掉的情形:某個版位是在「全域滑桿最後一次被拉動之後」才被勾選出現的,
+           它從來沒進過 _kvTransformPerId → 還原時完全收不到定位訊息 →
+           停在預設置中,而側欄全域滑桿卻顯示著另一個值,看起來就是「位置跑掉」。
+           沒有個別記錄時退回全域滑桿值;全域也沒動過時那就是 50/50/0
+           ＝預設置中,與舊行為完全相同,不會有副作用。 */
+        var _g = (state.kvGlobal && typeof state.kvGlobal.x === 'number')
+          ? { tx: state.kvGlobal.x / 100, ty: state.kvGlobal.y / 100, tz: state.kvGlobal.z / 100 }
+          : { tx: 0.5, ty: 0.5, tz: 0 };
+        var _sent = {};
+        document.querySelectorAll('.preview-block[data-id]').forEach(function (block) {
+          var id = block.dataset.id;
+          var t = _kvTransformPerId[id] || _g;
+          _sent[id] = true;
+          broadcastToId(id, { type: 'bn-kv-transform', tx: t.tx, ty: t.ty, tz: t.tz });
+        });
+        /* 保險:記錄裡有、但當下沒有對應 .preview-block 的 id(理論上不會發生,
+           但版位清單重繪的時序若對不上,這條能避免整個版位漏掉) */
         Object.keys(_kvTransformPerId).forEach(function (id) {
+          if (_sent[id]) return;
           var t = _kvTransformPerId[id];
           if (t) broadcastToId(id, { type: 'bn-kv-transform', tx: t.tx, ty: t.ty, tz: t.tz });
         });
@@ -609,8 +628,15 @@
         if (_sbdKvSrc) {
           broadcastToId(id, { type: 'bn-kv-image', src: _sbdKvSrc });
           /* 這個版位如果之前個別調整過構圖，重新套圖後一併補送回去，
-             不然畫面會先重置回置中，使用者的調整成果無故消失 */
+             不然畫面會先重置回置中，使用者的調整成果無故消失
+             ★ 2026-08:沒有個別記錄時退回全域滑桿目前的值(同 _bnSetSbdState 的理由)——
+               新勾選出現的版位過去會停在預設置中,與其他版位不一致。 */
           var cached = _kvTransformPerId[id];
+          if (!cached && _globalKvSliders) {
+            cached = { tx: (+_globalKvSliders.x.value) / 100,
+                       ty: (+_globalKvSliders.y.value) / 100,
+                       tz: (+_globalKvSliders.z.value) / 100 };
+          }
           if (cached) broadcastToId(id, { type: 'bn-kv-transform', tx: cached.tx, ty: cached.ty, tz: cached.tz });
         }
       }

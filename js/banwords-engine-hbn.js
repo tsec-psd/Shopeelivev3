@@ -449,6 +449,18 @@
   function applyNumericRules(text, role, options){
     let out = String(text || '');
 
+    /* ★ 2026-08 修正（規格文件 Bug 4.2「主播名稱包含數字時自動帶入 $ 符號」）：
+       購物專家＝真人姓名，其中的數字永遠不是金額。原本任何非 date 角色都會落到
+       下方的 applyStandardNumericRules()，而它會「加 $ 和千分位到所有裸數字」(:346)，
+       於是「王小明99」被改成「王小明$99」。此處整段跳過數字規則，原樣輸出。
+
+       ★ 必須同時接受兩個角色別名 —— 這是本專案既有的雙路徑設計，不是冗餘：
+         · 畫布上直接點字編輯 → bn.html roleMap3 傳 'host'（bn.html:1201）
+         · 左側側欄輸入框     → bn-state-plugin.js 傳 '購物專家'（bn-state-plugin.js:57）
+       上方 sanitizeAllowedCharacters() 早已同時判斷這兩個別名（見 :238 及 :243 註解），
+       本函式屬漏改。只擋其中一個別名，等於只修好一條輸入路徑。 */
+    if (role === 'host' || role === '購物專家') return out;
+
     if (role === 'date') {
       out = normalizeLeadingDateForDateRole(out);
 

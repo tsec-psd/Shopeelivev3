@@ -33,11 +33,24 @@
   }
   function applyRot(box, deg) {
     box.dataset.rot = String(deg);
+    /* ★ 契約防衛（2026-08）：外層 box 絕對不可以自己帶 rotate。
+       一旦帶了會同時壞三件事：
+         (1) 角度變兩倍 —— 這裡的 img 又轉一次，視覺上是 box∘img 疊加；
+         (2) box.getBoundingClientRect() 不再是軸對齊 AABB，setupProdDrag 的
+             拖曳／縮放／邊界夾限、群組外框、四角把手位置全部失準；
+         (3) 群組外框（用未旋轉的 style 座標算）與眼睛看到的框對不上。
+       layout-runtime.js 曾有兩處直接寫 box.style.transform='rotate(...)'
+       （共編套用、群組旋轉），已改為委派本函式；這行負責把殘留狀態自癒掉。
+       全專案沒有任何地方會合法地在 box 上設 transform（其餘 5 處都是
+       canvas 縮放與 zone 的 transformOrigin），故可安全清空。 */
+    if (box.style.transform) box.style.transform = '';
     var img = box.querySelector('img');
     if (!img) return; /* 防呆：box 尚未有圖或結構異常 → 靜默略過 */
     img.style.transformOrigin = 'center center';
     /* 只轉 img；外層 box 維持軸對齊。translateZ(0) 促成 GPU 合成、邊緣更平滑 */
     img.style.transform = 'rotate(' + deg + 'deg) translateZ(0)';
+    /* 商品旋轉時陰影要跟著重算(旋轉會關閉接地補強陰影，見 shadow-plugin.js) */
+    if (typeof global._bnRedrawShadowScene === 'function') global._bnRedrawShadowScene();
   }
 
   /* ── 把旋轉狀態回報父層（供未來持久化；父層未接也不會出錯）──── */
@@ -48,6 +61,7 @@
     global.parent.postMessage({
       type: 'bn-rot-change',
       id: id,
+      layoutId: (typeof window.__bnLayoutId === 'number' ? window.__bnLayoutId : 0),   /* ★ per-版位持久化 */
       isPerson: box.classList.contains('bn-person-box'),
       rot: getRot(box)
     }, '*');
@@ -107,8 +121,10 @@
     handle.appendChild(badge);
     box.appendChild(handle);
 
-    /* 選中 box 時（比照 corner handle 的觸發時機）顯示旋轉把手 */
-    box.addEventListener('pointerdown', function () {
+    /* 選中 box 時（比照 corner handle 的觸發時機）顯示旋轉把手;
+       ★ Shift 多選時不顯示(多選用群組錨點,不出現單選把手)。 */
+    box.addEventListener('pointerdown', function (e) {
+      if (e && e.shiftKey) { hideAllHandles(null); return; }
       hideAllHandles(box);
       showHandle(box);
     });
@@ -122,6 +138,9 @@
     /* ★ 關鍵：把手是 box 的子節點，pointerdown 會冒泡到 box → 觸發 setupProdDrag 的
        移動拖曳。必須 stopPropagation（含 immediate）截斷，旋轉與移動才不會打架。 */
     handle.addEventListener('pointerdown', function (e) {
+      /* ★ Shift 多選優先:落在旋轉把手上的 Shift 點擊放行(不 stopProp、不啟動旋轉),
+         讓事件冒泡到 box 觸發多選,避免把手把 Shift 點擊吃掉。 */
+      if (e.shiftKey) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
@@ -207,6 +226,11 @@
   global.RotatePlugin = {
     init: init,
     attach: attach,
+    /* ★ 對外開放旋轉的「唯一權威實作」：layout-runtime.js 的共編套用與群組旋轉
+       都改為呼叫這裡，避免第二份實作再次違反「只轉 img」的契約。
+       normalize 一併開放，讓群組旋轉的角度收斂方式與單選把手完全一致。 */
+    applyRot: applyRot,
+    normalize: normalize,
     setRotation: function (id, deg) {
       /* 分組選擇器無法安全套用屬性過濾（屬性只作用於最後一段），故逐一比對 */
       var box = null;

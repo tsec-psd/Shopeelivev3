@@ -7,6 +7,7 @@
 
 (function () {
   var urlId = parseInt(new URLSearchParams(location.search).get('bnid')) || 0;
+  window.__bnLayoutId = urlId;   /* ★ 對外開放版位 id:回報 layout 需帶版位識別(per-版位持久化),rotate-plugin 等共用 */
   var fname = decodeURIComponent(location.pathname.split('/').pop().replace(/\.html$/i, ''));
 
   function loadCSS(href, cb) {
@@ -25,9 +26,53 @@
   loadCSS(fname + '.config.css', onBothLoaded);
   window.addEventListener('load', function(){ setTimeout(init, 600); });
   var inited = false;
+  var _fontsReady = false;         /* 字體是否已就緒（或已逾時放行） */
+  var _fontLoadStarted = false;    /* 防止兩條 init 觸發路徑重複啟動字體載入 */
+
+  /* ── 字體預載（鐵律）─────────────────────────────────────────────
+     指定字體 family 為 "ShopeeNotoSans (content)"（五版位 @font-face 完全一致），
+     以 font-weight 400(Medium) / 700(Bold) 區分。渲染畫布前必須確認字體
+     100% 載入，避免 FOUT／預設字體替代被烤進 html2canvas 匯出圖。
+     ★ family 名以實際 @font-face 為準（含空格），不可用 "-Medium/-Bold"
+       這種不存在的字型名去 load，否則永遠找不到、只能等到逾時。
+     防呆：
+       ① CDN 慢或掛 → Promise.race 逾時放行，寧可 fallback 字體也不白屏卡死。
+       ② 老瀏覽器無 document.fonts API → 直接視為就緒，維持原本觸發流程。 */
+  var FONT_FAMILY  = '"ShopeeNotoSans (content)"';
+  var FONT_TIMEOUT = 4000;
+  function ensureFontsLoaded() {
+    if (!document.fonts || typeof document.fonts.load !== 'function') {
+      return Promise.resolve();            /* 降級：無 API 就當就緒 */
+    }
+    var loads = Promise.all([
+      document.fonts.load('400 16px ' + FONT_FAMILY),
+      document.fonts.load('700 16px ' + FONT_FAMILY)
+    ]).then(function(){ return document.fonts.ready; })
+      .catch(function(){ /* 字體載入失敗(CDN 不通等)也視為就緒,不可卡住繪製 */ });
+    var timeout = new Promise(function(res){
+      setTimeout(function(){
+        console.warn('[layout-runtime] 字體載入逾時 ' + FONT_TIMEOUT + 'ms，以現有字體繼續繪製');
+        res();
+      }, FONT_TIMEOUT);
+    });
+    return Promise.race([loads, timeout]);
+  }
 
   function init() {
     if (inited) return;
+    /* ★ 字體 gate：字體未就緒前不繪製。第一次進來啟動預載後直接 return，
+       字體就緒（或逾時）後再重入 init 執行真正的繪製與外掛初始化。
+       兩條觸發路徑（CSS onload / window.load）都可能進來，靠 _fontLoadStarted
+       確保只啟動一次載入，靠 inited 確保只繪製一次。 */
+    if (!_fontsReady) {
+      if (!_fontLoadStarted) {
+        _fontLoadStarted = true;
+        ensureFontsLoaded()
+          .then(function(){ _fontsReady = true; init(); })
+          .catch(function(){ _fontsReady = true; init(); });  /* 極端保險:任何情況都要繪製 */
+      }
+      return;
+    }
     inited = true;
 
     /* ★ 鎖定「圖片類」元素不可被反藍/反灰：
@@ -91,6 +136,17 @@
       });
     }
 
+    /* ★ 修「多選/單選要點好幾次」:設計圖層(購物專家Bar、文字、LOGO、背景…)在預覽中本就不互動,
+       但預設 pointer-events:auto 且 z-index 高於商品範圍(如直播大廳商品 z3、Bar z6),會蓋住商品吃掉點擊。
+       這裡把 #canvas 的所有設計圖層一律設 pointer-events:none,只留「商品範圍/商品圖範圍/SBD 白框」
+       可接收點擊 → 商品/人物即使被設計圖層蓋住也點得到;錨點把手(pointer-events:auto)亦可穿透設計圖層被點到。 */
+    Array.prototype.forEach.call(canvas.children, function(ch){
+      if (ch.classList && (ch.classList.contains('\u5546\u54c1\u7bc4\u570d') ||
+                           ch.classList.contains('\u5546\u54c1\u5716\u7bc4\u570d') ||
+                           ch.classList.contains('bn-kv-frame'))) return;
+      ch.style.pointerEvents = 'none';
+    });
+
     function fit() {
       if (window.parent !== window) {
         canvas.style.transform = 'none';
@@ -127,6 +183,7 @@
        drawImage(img, 0,0, 原圖寬,原圖高, box.left,box.top, box.寬,box.高)
      ——把整張原圖硬塞進 <img> 的 content box，object-fit 完全不看。
      所以只要「容器比例 ≠ 原圖比例」，預覽正常但匯出就會被拉伸。
+     （實測落差：公版 <10%，直播時縮圖 SBD 達 ~32%，故 SBD 特別明顯。）
 
      解法：讓 <img> 自己的盒子就等於 contain 後的精確比例，
      object-fit 變成 no-op，預覽與匯出必然一致。
@@ -189,6 +246,138 @@
         img.addEventListener('load', function () { _fitLogoImg(img); });
       }
       _fitLogoImg(img);
+    });
+  }
+
+  /* ══ 人物／商品圖的匯出等比校正（規格文件 Bug 2.1「人物圖層下載後受到拉伸壓縮」）══
+     與上面的 LOGO 修正是同一個根因:html2canvas 1.4.1 不支援 object-fit,
+     會把原圖硬塞滿 <img> 的 content box。人物圖(:1056)與商品圖(:552)都是
+     `width:100%;height:100%;object-fit:contain`,所以只要「盒子比例 ≠ 原圖比例」,
+     預覽被 contain 修正得好好的,一匯出就整個被拉伸 —— 正是「預覽正常、下載才歪」。
+
+     盒子比例會在這幾條路徑上脫離原圖比例(寬高各自獨立套用百分比):
+       · _applyPct()              —— 手動位置還原
+       · bn-persons 的 userMoved 還原
+       · bn-coedit-apply 的群組變形
+     (建立、構圖、四角縮放這三條本來就是等比的,不受影響。)
+
+     ★ 與 LOGO 修正的關鍵差異,不能照抄:
+     LOGO 容器幾乎不變動,所以 _fitLogoImg() 可以把尺寸「永久」釘在 img 上;
+     但人物/商品盒子會被拖曳、構圖、共編不斷改變尺寸,永久釘住會害圖片
+     從此不再跟著盒子縮放(等於製造一個新的、更難查的 bug)。
+     故這裡只在截圖當下套用,並回傳還原函式,拍完立刻復原 ——
+     與下方 _hideSelUIForCapture() 同一個模式(then/catch 都要還原)。 */
+  var BOX_FIT_SEL = '.bn-person-box > img, .bn-prod-box > img';
+
+  function _fitBoxImgsForCapture() {
+    var touched = [];
+    document.querySelectorAll(BOX_FIT_SEL).forEach(function (img) {
+      var natW = img.naturalWidth  || parseFloat(img.dataset.bnNatW) || 0;
+      var natH = img.naturalHeight || parseFloat(img.dataset.bnNatH) || 0;
+      if (!natW || !natH) return;          /* 尚未載入完成 → 跳過,不亂算 */
+      img.dataset.bnNatW = String(natW);
+      img.dataset.bnNatH = String(natH);
+
+      var host = img.parentElement;
+      if (!host) return;
+      var hcs   = window.getComputedStyle(host);
+      var hostW = parseFloat(hcs.width)  || 0;
+      var hostH = parseFloat(hcs.height) || 0;
+      if (!hostW || !hostH) return;
+
+      /* contain:等比縮到完整放進盒子(與預覽的 object-fit:contain 同結果) */
+      var scale = Math.min(hostW / natW, hostH / natH);
+      var w = Math.round(natW * scale);
+      var h = Math.round(natH * scale);
+
+      /* 盒子本來就已經是原圖比例 → 匯出不會變形,不必動它。
+         省下還原成本,也避免四捨五入造成 1px 抖動。 */
+      if (Math.abs(w - hostW) < 1 && Math.abs(h - hostH) < 1) return;
+
+      touched.push({ img: img, cssText: img.style.cssText });
+
+      img.style.setProperty('width',  w + 'px', 'important');
+      img.style.setProperty('height', h + 'px', 'important');
+      /* ★ 這兩行與 LOGO 版不同:LOGO 是 object-position:left center,只需補垂直;
+         人物/商品的 img 沒有指定 object-position → 預設 center center,
+         所以水平、垂直都要補償,否則圖會靠左上角而不是置中。
+         補償後 img 的中心仍與盒子中心重合,rotate-plugin 的旋轉(繞 img 自身中心)
+         結果不變,不會因為這次校正而位移。 */
+      img.style.setProperty('margin-left', Math.round((hostW - w) / 2) + 'px', 'important');
+      img.style.setProperty('margin-top',  Math.round((hostH - h) / 2) + 'px', 'important');
+    });
+
+    /* 還原:直接寫回快照當下的整串 inline style,
+       連 rotate-plugin 掛上的 transform 也一併保住(快照是在修改「之前」取的)。 */
+    return function () {
+      touched.forEach(function (t) { t.img.style.cssText = t.cssText; });
+    };
+  }
+
+  /* ══ 多張廠商 LOGO 並排的尺寸計算（單一權威）══════════════════════════
+     ★ hbn 與 flex 兩個分支共用這一支,不要各自複製一份 ——
+       本專案已經在 extractColor / restoreHistoryState 上吃過
+       「兩份實作各自演化到不一致」的虧,同樣的錯不再犯第三次。
+
+     【為什麼改成等面積】(規格文件 Bug 3.1)
+     舊演算法是「等高正規化 + 依總寬等比縮小」:每張 LOGO 先拉到 zone 滿高,
+     寬度由原圖比例決定,加總超出就全體同比例縮小。
+     問題:長方形 LOGO 在等高時會吃掉極多寬度,拖累全體縮小,
+     而方形 LOGO 本來就寬度精簡,結果被懲罰得最重。
+     實例(直播時縮圖 97×45,間距 10,方形 1:1 + 長方形 4:1):
+       舊:方形 17×17(只用到 45px 高的 39%)、長方形 70×17
+       新:方形 29×29(+67%)      、長方形 58×15
+     根本原因是「視覺份量取決於面積,不是高度」,故改以面積作為正規化基準。
+
+     【數學】令每張面積均為 A、第 i 張長寬比 r_i:
+       w_i = √(A·r_i)、h_i = √(A/r_i)
+     受兩個上限拘束,取較小者:
+       ① 總寬不得超出可用寬 → √A ≤ availW / Σ√r_i
+       ② 任一張高度不得超框高 → √A ≤ zoneH · min(√r_i)
+
+     【向後相容】n=1 時本式與舊式在數學上完全等價
+     (√A = min(availW/√r, zoneH·√r) 展開後即 contain 於 availW×zoneH),
+     所以「單一廠商 LOGO」的版位輸出不會有任何變化,只有多張並排才改變。 */
+  /* ★ 平衡係數 p:等高與等面積之間的連續光譜(2026-08 追加)
+     w_i ∝ r^p、h_i ∝ r^(p-1),其中 r 為該 LOGO 的長寬比。
+       p = 1.0 → 等高正規化(最初版):方形 LOGO 被壓得很小
+       p = 0.5 → 等面積正規化      :方形放大,但長方形寬度縮 17%,
+                                     文字商標(如 dyson)辨識度下降
+       p = 0.75 → 目前值,兩者的中間點
+     以 直播時縮圖(97×45、間距 10、方形+4:1)實算:
+       p=1.0  方 17×17、長 70×17
+       p=0.75 方 23×23、長 64×16   ← 方形比最初版大 35%,長方形只縮 9%
+       p=0.5  方 29×29、長 58×15
+     ★ 要調整就只改這一個數字,調大偏袒長方形、調小偏袒方形。
+     ★ 數學性質:n=1(只有一家廠商 LOGO)時,本式恆等於
+       contain 於 availW×zoneH,與 p 無關 —— 故單張情境永遠不受 p 影響。 */
+  var LOGO_BALANCE_P = 0.75;
+
+  function _calcLogoRowSizes(ratios, zoneW, zoneH, gap) {
+    var n = ratios.length;
+    if (!n) return [];
+
+    var availW = zoneW - gap * (n - 1);
+    if (availW <= 0) availW = zoneW;      /* 防呆:框太窄時至少不要算出負數 */
+
+    var p = LOGO_BALANCE_P;
+    var sumWf = 0, maxHf = 0;
+    var factors = ratios.map(function (r) {
+      var rr = (r > 0 && isFinite(r)) ? r : 1;   /* 防呆:比例異常一律當正方形 */
+      var wf = Math.pow(rr, p);         /* 寬度形狀因子 */
+      var hf = Math.pow(rr, p - 1);     /* 高度形狀因子 */
+      sumWf += wf;
+      if (hf > maxHf) maxHf = hf;
+      return { wf: wf, hf: hf };
+    });
+
+    /* K 同時受兩個上限拘束,取較小者:
+       ① 總寬不得超出可用寬 → K ≤ availW / Σ(r^p)
+       ② 任一張高度不得超框高 → K ≤ zoneH / max(r^(p-1)) */
+    var K = Math.min(availW / sumWf, zoneH / maxHf);
+
+    return factors.map(function (f) {
+      return { w: Math.round(K * f.wf), h: Math.round(K * f.hf) };
     });
   }
 
@@ -351,38 +540,28 @@
             var zoneW = parseFloat(rootCs.getPropertyValue('--logo-zone-w')) ||
                         parseFloat(cs.width)  || 125;
 
-            /* 設定此圖自然高寬 */
-            var ratio = img.naturalWidth / (img.naturalHeight || 1);
-            img.dataset.naturalW = String(Math.round(zoneH * ratio));
+            /* 只記下原圖長寬比，尺寸等全部載完後由 _calcLogoRowSizes 統一計算 */
+            img.dataset.bnRatio = String(img.naturalWidth / (img.naturalHeight || 1));
 
             if (loadedCount < totalLogos) return; /* 等其他圖也 load */
 
-            /* 全部載完：計算總寬 */
+            /* 全部載完：以「等面積」計算各自尺寸（原理見 _calcLogoRowSizes 上方註解） */
             var allImgs = Array.from(zone.querySelectorAll('img.bn-logo-img'));
-            var n = allImgs.length;
-            var totalW = 0;
-            allImgs.forEach(function(el, idx){
-              totalW += parseFloat(el.dataset.naturalW || 0);
-              if (idx < n - 1) totalW += GAP;
-            });
+            var sizes = _calcLogoRowSizes(
+              allImgs.map(function(el){ return parseFloat(el.dataset.bnRatio) || 1; }),
+              zoneW, zoneH, GAP);
 
-            /* 若超出容器寬度，等比縮小 scale
-               ★ scale 只作用於圖片寬度，GAP 固定不縮放
-               所以可用空間 = zoneW - GAP*(n-1)，再除以純圖片總寬 */
-            var imgOnlyW = totalW - GAP * (n - 1);
-            var availW   = zoneW  - GAP * (n - 1);
-            var scale = (imgOnlyW > availW && imgOnlyW > 0) ? (availW / imgOnlyW) : 1;
             var x = 0;
-            allImgs.forEach(function(el){
-              var w = Math.round(parseFloat(el.dataset.naturalW || 0) * scale);
-              var h = Math.round(zoneH * scale);
-              var topOffset = Math.round((zoneH - h) / 2);
-              el.style.width   = w + 'px';
-              el.style.height  = h + 'px';
+            allImgs.forEach(function(el, idx){
+              var s = sizes[idx] || { w: 0, h: 0 };
+              el.style.width   = s.w + 'px';
+              el.style.height  = s.h + 'px';
               el.style.left    = x + 'px';
-              el.style.top     = topOffset + 'px';
+              /* ★ 等面積之後各張高度不再相同，垂直置中必須逐張算
+                 （舊版全體同高，才能共用一個 topOffset）*/
+              el.style.top     = Math.round((zoneH - s.h) / 2) + 'px';
               el.style.display = 'block';
-              x += w + GAP;
+              x += s.w + GAP;
             });
           };
 
@@ -429,34 +608,29 @@
 
           img.onload = function() {
             flexLoaded++;
-            var ratio = img.naturalWidth / (img.naturalHeight || 1);
-            img.dataset.naturalW = String(Math.round(flexZoneH * ratio));
+            /* 只記下原圖長寬比，尺寸等全部載完後由 _calcLogoRowSizes 統一計算 */
+            img.dataset.bnRatio = String(img.naturalWidth / (img.naturalHeight || 1));
             if (flexLoaded < flexTotal) return;
 
-            /* 全部載完：計算是否需要等比縮放 */
+            /* 全部載完：以「等面積」計算各自尺寸（與上面 hbn 分支共用同一支函式，
+               確保五個版位的廠商 LOGO 排版行為一致，不會兩邊各自演化） */
             var n = flexImgs.length;
-            var totalW = 0;
-            flexImgs.forEach(function(el, idx) {
-              totalW += parseFloat(el.dataset.naturalW || 0);
-              if (idx < n - 1) totalW += FLEX_GAP;
-            });
-            var imgOnlyW = totalW - FLEX_GAP * (n - 1);
-            var availW   = flexZoneW - FLEX_GAP * (n - 1);
-            var scale    = (imgOnlyW > availW && imgOnlyW > 0) ? (availW / imgOnlyW) : 1;
+            var sizes = _calcLogoRowSizes(
+              flexImgs.map(function(el){ return parseFloat(el.dataset.bnRatio) || 1; }),
+              flexZoneW, flexZoneH, FLEX_GAP);
 
             zone.style.display        = 'flex';
-            zone.style.alignItems     = 'center';
+            zone.style.alignItems     = 'center';   /* 各張高度不同，靠這行垂直置中 */
             zone.style.justifyContent = 'center';
             zone.style.gap            = FLEX_GAP + 'px';
 
             var renderedW = 0;
             flexImgs.forEach(function(el, idx) {
-              var w = Math.round(parseFloat(el.dataset.naturalW || 0) * scale);
-              var h = Math.round(flexZoneH * scale);
-              el.style.width   = w + 'px';
-              el.style.height  = h + 'px';
+              var s = sizes[idx] || { w: 0, h: 0 };
+              el.style.width   = s.w + 'px';
+              el.style.height  = s.h + 'px';
               el.style.display = 'block';
-              renderedW += w;
+              renderedW += s.w;
               if (idx < n - 1) renderedW += FLEX_GAP;   /* 多張廠商 logo 之間的間距也算進去 */
             });
 
@@ -479,54 +653,75 @@
       var pzone = getProductZone(); if(!pzone) return;
       /* ★ SBD 模式下商品要掛進白框（被裁切），公版模式維持掛在商品範圍 */
       var prodZone = getProdZone();
-      /* 去重：用 queryProdBox 跨容器搜尋（不管舊 box 當時是掛在
-         白框內還是商品範圍下都找得到），移除相同 id 的舊 box */
-      var existing = queryProdBox(e.data.id);
-      if (existing) existing.remove();
       pzone.style.background = 'transparent'; pzone.style.opacity = '1';
       pzone.style.overflow = 'visible'; pzone.style.position = 'relative';
-      var box = document.createElement('div');
-      box.className = 'bn-prod-box';
-      box.dataset.id = e.data.id;
+
+      /* ★ 抗閃爍:若同 id 的 box 已存在就「就地更新」,不移除重建。
+         還原/重播時大多數商品其實沒變,重建會造成整批消失再出現的抖動。 */
+      var box = queryProdBox(e.data.id);
+      var isNewBox = !box;
+      if (isNewBox) {
+        box = document.createElement('div');
+        box.className = 'bn-prod-box';
+        box.dataset.id = e.data.id;
+        box.style.pointerEvents = 'auto';   /* 確保不繼承父容器的 pointer-events:none */
+        var pimg = document.createElement('img');
+        pimg.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;display:block;';
+        box.appendChild(pimg);
+        ['nw','ne','sw','se'].forEach(function(c){
+          var h = document.createElement('div'); h.dataset.corner = c;
+          h.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;'+
+            'background:#4a90e2;border:2px solid #fff;z-index:20;display:none;'+  /* 預設隱藏 */
+            (c==='nw'?'left:-7px;top:-7px;cursor:nwse-resize;':'')+
+            (c==='ne'?'right:-7px;top:-7px;cursor:nesw-resize;':'')+
+            (c==='sw'?'left:-7px;bottom:-7px;cursor:nesw-resize;':'')+
+            (c==='se'?'right:-7px;bottom:-7px;cursor:nwse-resize;':'');
+          box.appendChild(h);
+        });
+      }
+      /* 共同:更新 dataset + 圖片來源(就地更新) */
       box.dataset.ratio = e.data.ratio||1;
       box.dataset.sizeScale = e.data.sizeScale||1;
       if (e.data.rot !== undefined) box.dataset.rot = e.data.rot; /* 旋轉持久化 */
       box.dataset.position  = e.data.position !== undefined ? e.data.position : e.data.index || 0;
-      /* ★ 手動位置還原用：只有 userMoved 且百分比座標為有效數字時才記錄，
-         其餘情況維持 undefined，讓下方 applyManualProductPositions() 略過、
-         繼續吃 layoutProducts()/_smartAutoLayout() 的自動排版結果 */
       box.dataset.userMoved = e.data.userMoved ? '1' : '0';
+      box.dataset.coeditApplied = e.data.coeditApplied ? '1' : '0';   /* ★#3 持久化:重建後保住共編/手動之別 */
       if (e.data.userMoved && typeof e.data.leftPct === 'number') {
         box.dataset.leftPct   = e.data.leftPct;
         box.dataset.topPct    = e.data.topPct;
         box.dataset.widthPct  = e.data.widthPct;
         box.dataset.heightPct = e.data.heightPct;
+      } else {   /* 非手動:清掉舊 pct,讓自動排版接管 */
+        delete box.dataset.leftPct; delete box.dataset.topPct;
+        delete box.dataset.widthPct; delete box.dataset.heightPct;
       }
-      /* 明確加 pointer-events:auto，確保不繼承父容器的 pointer-events:none */
-      box.style.pointerEvents = 'auto';
-      var pimg = document.createElement('img'); pimg.src = e.data.src;
-      pimg.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;display:block;';
-      box.appendChild(pimg);
-      ['nw','ne','sw','se'].forEach(function(c){
-        var h = document.createElement('div'); h.dataset.corner = c;
-        h.style.cssText = 'position:absolute;width:14px;height:14px;border-radius:50%;'+
-          'background:#4a90e2;border:2px solid #fff;z-index:20;display:none;'+  /* 預設隱藏 */
-          (c==='nw'?'left:-7px;top:-7px;cursor:nwse-resize;':'')+
-          (c==='ne'?'right:-7px;top:-7px;cursor:nesw-resize;':'')+
-          (c==='sw'?'left:-7px;bottom:-7px;cursor:nesw-resize;':'')+
-          (c==='se'?'right:-7px;bottom:-7px;cursor:nwse-resize;':'');
-        box.appendChild(h);
-      });
-      prodZone.appendChild(box);
-      setupProdDrag(box, prodZone);
+      var pimgEl = box.querySelector('img');
+      if (pimgEl && e.data.src && pimgEl.getAttribute('src') !== e.data.src) pimgEl.src = e.data.src;
+      /* 陰影縮放微調(全排版共用同一個值，不走 per-版位協定) */
+      if (e.data.shadowScaleX !== undefined) box.dataset.shadowScaleX = e.data.shadowScaleX;
+      if (e.data.shadowScaleY !== undefined) box.dataset.shadowScaleY = e.data.shadowScaleY;
+      /* 註冊/更新進 ShadowPlugin：即時陰影引擎，商品照片本身仍由這個 <img> 顯示 */
+      if (pimgEl && typeof window.ShadowPlugin !== 'undefined') {
+        window.ShadowPlugin.registerProduct(e.data.id, pimgEl).then(_bnRedrawShadowScene);
+      }
+
+      if (isNewBox) {
+        prodZone.appendChild(box);
+        setupProdDrag(box, prodZone);         /* 只有新 box 才綁事件,避免重複監聽 */
+      } else if (box.parentNode !== prodZone) {
+        prodZone.appendChild(box);            /* 容器切換(SBD/公版)才搬移 */
+        box._dragZone = prodZone;
+      }
       layoutProducts(prodZone);
       /* 商品盒建立完成後延遲 30ms，等待同批次所有 bn-product-add 落地後
          再執行 _smartAutoLayout，避免中途觸發導致位置計算不完整；
          再延遲到 60ms，於自動排版跑完後，把「使用者真的手動調過」的
          商品位置用百分比覆寫回來 —— 覆寫必須排在自動排版之後，
-         不然會被 layoutProducts()/_smartAutoLayout() 的結果蓋掉。*/
+         不然會被 layoutProducts()/_smartAutoLayout() 的結果蓋掉。
+         陰影重繪排在最後(70ms)，確保商品位置已經定案。*/
       setTimeout(_smartAutoLayout, 30);
       setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+      setTimeout(_bnRedrawShadowScene, 70);
     }
 
     /* 人物就地更新：更新 src/ratio，不重置位置（編輯/去背完成後使用，邏輯比照商品圖 bn-product-update）
@@ -547,7 +742,7 @@
       return;
     }
 
-    /* 商品就地更新：更新 src/ratio，不重置位置（陰影重算/切換使用）*/
+    /* 商品就地更新：更新 src/ratio，不重置位置（去背/編輯完成後使用）*/
     if (e.data.type === 'bn-product-update') {
       var box = queryProdBox(e.data.id);
       if (!box) return;
@@ -558,19 +753,145 @@
       var curH = parseFloat(box.style.height) || box.offsetHeight || 100;
       box.style.width = Math.round(curH * newRatio) + 'px';
       box.dataset.ratio = String(newRatio);
+      /* 圖片換了，輪廓/去背也要重新註冊，否則陰影還是舊形狀 */
+      if (imgEl && typeof window.ShadowPlugin !== 'undefined') {
+        window.ShadowPlugin.registerProduct(e.data.id, imgEl).then(_bnRedrawShadowScene);
+      }
+      return;
+    }
+
+    /* ★ 共編套用:接收 coedit-plugin 廣播的 bn-coedit-apply,把共編畫布的隊形/角度/
+       大小以「保形置中」映射到本版位。共編座標(cx/cy/hRel)相對「共編安全區(0..1)」,
+       本版位以自己容器的 min(寬,高)*safe 置中方形為基準——各版位各自映射,天然跨版位
+       一致(超扁容器商品偏小、兩側留白,即先前定案的保形置中取捨)。
+       mode='safe':已手動微調(userMoved)者略過位置、只套角度/大小(尊重微調權);
+       mode='all':一律覆蓋位置並標記 userMoved。
+       註:本批為「即時套用顯示」,尚未回報 parent 持久化(重建後不保留),故不觸發
+       postLayoutChange、無迴圈之虞;持久化 + silent 旗標為後續步驟。 */
+    if (e.data.type === 'bn-coedit-apply') {
+      var czone = getProductZone();
+      if (!czone) return;
+      var citems = Array.isArray(e.data.items) ? e.data.items : [];
+      var zw = czone.offsetWidth || parseFloat(czone.style.width) || 0;
+      var zh = czone.offsetHeight || parseFloat(czone.style.height) || 0;
+      if (zw <= 0 || zh <= 0) return;                       /* 容器尺寸未就緒,防呆 */
+      /* ★ 映射策略:一般版位 = 共編方形以 side=min(寬,高) 等比 fit、置中(既有行為,逐字不變)。
+         寬/小範位(zw/zh ≥ WIDE_FIT_RATIO,如直播大廳超扁)改用 bbox-fit:把「隊形實際外框」
+         保持比例撐大到填滿商品範圍、置中,避免只用到短邊而物件特別小。
+         M = 每單位(共編 0..1)對應的 px;一般版位 M=side,寬版位 M=填滿尺度。 */
+      var WIDE_FIT_RATIO = 1.3;                 /* 命中直播大廳(480/337≈1.42);其餘(≤1.10)走原路徑不變 */
+      var wide = (zw / zh) >= WIDE_FIT_RATIO;
+      var M, offX = 0, offY = 0, bboxCX = 0, bboxCY = 0;
+      if (wide) {
+        var bxMin = Infinity, bxMax = -Infinity, byMin = Infinity, byMax = -Infinity;
+        citems.forEach(function (it) {
+          var w = parseFloat(it.wRel) || 0.2, h = parseFloat(it.hRel) || 0.3;
+          var xr = parseFloat(it.cx); if (isNaN(xr)) xr = 0.5;
+          var yr = parseFloat(it.cy); if (isNaN(yr)) yr = 0.5;
+          if (xr - w / 2 < bxMin) bxMin = xr - w / 2;
+          if (xr + w / 2 > bxMax) bxMax = xr + w / 2;
+          if (yr - h / 2 < byMin) byMin = yr - h / 2;
+          if (yr + h / 2 > byMax) byMax = yr + h / 2;
+        });
+        var bW = Math.max(bxMax - bxMin, 0.01), bH = Math.max(byMax - byMin, 0.01);  /* 防除以 0 */
+        M = Math.min(zw / bW, zh / bH) * 0.96;   /* 保比例填滿、留 4% 邊距不貼邊 */
+        bboxCX = (bxMin + bxMax) / 2; bboxCY = (byMin + byMax) / 2;
+      } else {
+        M = Math.min(zw, zh);                     /* 原 side */
+        offX = (zw - M) / 2; offY = (zh - M) / 2;
+      }
+      var isAll = e.data.mode === 'all';
+      citems.forEach(function (it) {
+        var cbox = it.kind === 'person'
+          ? czone.querySelector('.bn-person-box[data-id="' + it.id + '"]')
+          : queryProdBox(it.id);
+        if (!cbox) return;
+
+        /* ★#3 safe 保護判定:只有「使用者真的在畫布上手動調過(userMoved==='1')
+           且不是上一輪共編套出來的(coeditApplied!=='1')」的版位,才【整顆完全不動】——
+           連大小/旋轉/位置都不碰,徹底尊重手動微調(修正:原本 safe 會無條件覆寫大小/旋轉,
+           導致已手動調整版位被重算、亂飛)。
+           - all 模式(isAll):一律覆蓋,不保護。
+           - coeditApplied==='1'(上輪共編套出、之後沒手動動過):視為可再被共編更新 → 不保護。 */
+        var isProtected = !isAll && cbox.dataset.userMoved === '1' && cbox.dataset.coeditApplied !== '1';
+        if (isProtected) return;                              /* 手動微調版位:整顆略過 */
+
+        var ow = (parseFloat(it.wRel) || 0.2) * M;
+        var oh = (parseFloat(it.hRel) || 0.3) * M;
+        cbox.style.width  = Math.round(ow) + 'px';
+        cbox.style.height = Math.round(oh) + 'px';
+        /* ★ 同上:旋轉委派 rotate-plugin(只轉 img)。原本這裡直接寫 cbox.style.transform,
+           之後 rotate-plugin 在 img 被替換時會再套一次 → 共編套用過的商品角度變兩倍。 */
+        _applyRot(cbox, parseFloat(it.rot) || 0);
+
+        var cxr = parseFloat(it.cx); if (isNaN(cxr)) cxr = 0.5;
+        var cyr = parseFloat(it.cy); if (isNaN(cyr)) cyr = 0.5;
+        /* 水平:一般=offX+cx·M;寬版位=以隊形外框中心對齊商品範圍中心(填滿寬) */
+        var cxPx = wide ? (zw / 2 + (cxr - bboxCX) * M) : (offX + cxr * M);
+        cbox.style.left = Math.round(cxPx - ow / 2) + 'px';
+        if (it.kind === 'person') {
+          /* ★ 人物錨在商品範圍底、尊重共編垂直擺放(M=一般 side / 寬版位 fill 尺度):
+             腳放共編底→落地板(等同 top=zh−oh)、凸出→往地板下裁切、放高→離地。 */
+          var pBottomRel = cyr + (parseFloat(it.hRel) || 0) / 2;
+          cbox.style.top = Math.round((zh + (pBottomRel - 1) * M) - oh) + 'px';
+        } else {
+          /* 商品:一般=offY+cy·M(坐陰影線);寬版位=隊形外框中心對齊商品範圍中心 */
+          var cyPx = wide ? (zh / 2 + (cyr - bboxCY) * M) : (offY + cyr * M);
+          cbox.style.top = Math.round(cyPx - oh / 2) + 'px';
+        }
+        cbox.dataset.userMoved = '1';                         /* 共編位置=手動指定,脫離自動構圖 */
+        cbox.dataset.coeditApplied = '1';                     /* ★#3 標記共編套出(供下輪 safe 可再更新;手動一動即清) */
+        /* 持久化:pct 相對商品範圍容器,回報 parent(重建後還原) */
+        var flL = parseFloat(cbox.style.left) || 0, flT = parseFloat(cbox.style.top) || 0;
+        var flW = parseFloat(cbox.style.width) || 0, flH = parseFloat(cbox.style.height) || 0;
+        cbox.dataset.leftPct   = flL / zw; cbox.dataset.topPct    = flT / zh;
+        cbox.dataset.widthPct  = flW / zw; cbox.dataset.heightPct = flH / zh;
+        if (window.parent !== window) {
+          window.parent.postMessage({
+            type: it.kind === 'person' ? 'bn-person-layout' : 'bn-product-layout',
+            id: it.id, layoutId: urlId,   /* ★ per-版位持久化 */
+            left: flL, top: flT, width: flW, height: flH,
+            leftPct: flL / zw, topPct: flT / zh, widthPct: flW / zw, heightPct: flH / zh,
+            userMoved: cbox.dataset.userMoved === '1', coeditApplied: cbox.dataset.coeditApplied === '1', rot: parseFloat(it.rot) || 0
+          }, '*');
+        }
+      });
+      _bnRedrawShadowScene();
       return;
     }
 
     if (e.data.type === 'bn-product-remove') {
       var pzone = getProductZone(); if(!pzone) return;
+      if (e.data.id === '__all__') {   /* ★ 清除商品 box:提供 keep 清單時只移除「不在清單」的殘留(保留有效 box,避免全清重建閃爍);無 keep 則全清 */
+        var _keep = e.data.keep;
+        if (Array.isArray(_keep)) {
+          var _keepSet = {}; _keep.forEach(function(k){ _keepSet[k] = true; });
+          queryAllProdBox().forEach(function(b){
+            if(!_keepSet[b.dataset.id]) {
+              if (typeof window.ShadowPlugin !== 'undefined') window.ShadowPlugin.removeProduct(b.dataset.id);
+              b.remove();
+            }
+          });
+        } else {
+          queryAllProdBox().forEach(function(b){
+            if (typeof window.ShadowPlugin !== 'undefined') window.ShadowPlugin.removeProduct(b.dataset.id);
+            b.remove();
+          });
+          pzone.style.background=''; pzone.style.opacity='';
+        }
+        _bnRedrawShadowScene();
+        return;
+      }
       var el = queryProdBox(e.data.id);
       if(el) el.remove();
+      if (typeof window.ShadowPlugin !== 'undefined') window.ShadowPlugin.removeProduct(e.data.id);
       var remaining = queryAllProdBox();
       if(!remaining.length) { pzone.style.background=''; pzone.style.opacity=''; }
       else {
         setTimeout(_smartAutoLayout, 30);
         setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
       }
+      _bnRedrawShadowScene();
     }
 
     /* z-index 順序更新：order[0] = 最上層（z 最高） */
@@ -581,6 +902,27 @@
         var box = queryProdBox(id);
         if(box) box.style.zIndex = String(total - i + 10);
       });
+      _bnRedrawShadowScene();
+    }
+
+    /* 陰影縮放微調(側欄滑桿驅動)：只更新 dataset + 觸發重繪，不重建 box */
+    if (e.data.type === 'bn-product-shadow-scale') {
+      var _ssBox = queryProdBox(e.data.id);
+      if (_ssBox) {
+        if (e.data.shadowScaleX !== undefined) _ssBox.dataset.shadowScaleX = e.data.shadowScaleX;
+        if (e.data.shadowScaleY !== undefined) _ssBox.dataset.shadowScaleY = e.data.shadowScaleY;
+        _bnRedrawShadowScene();
+      }
+      return;
+    }
+
+    /* 全域光源角度：左/中/右 三種斜切角度切換 */
+    if (e.data.type === 'bn-shadow-angle') {
+      if (typeof window.ShadowPlugin !== 'undefined' && e.data.preset) {
+        window.ShadowPlugin.setAngle(e.data.preset);
+        _bnRedrawShadowScene();
+      }
+      return;
     }
 
     /* 人物圖層順序更新：order[0] = 最前層（z 最高）
@@ -599,7 +941,16 @@
     if (e.data.type === 'bn-compose') {
       /* 記住最後一次套用的構圖，供 _smartAutoLayout 在商品數量變動時重用 */
       window.__bnLastPreset = e.data.preset;
-      _applyCompose(e.data.preset, { preserveManual: e.data.preserveManual !== false });
+      /* ★ resetManual(使用者主動按「構圖」):清掉所有商品/人物的手動標記與 pct,
+         讓構圖完整收回範圍(含手動拖出的);還原/暫存讀回的 compose 不帶此旗標 → 手動位置由補套保住。 */
+      if (e.data.resetManual) {
+        document.querySelectorAll('.bn-prod-box,.bn-person-box').forEach(function(b){
+          b.dataset.userMoved = '0'; b.dataset.coeditApplied = '0';
+          delete b.dataset.leftPct; delete b.dataset.topPct;
+          delete b.dataset.widthPct; delete b.dataset.heightPct;
+        });
+      }
+      _applyCompose(e.data.preset);
       return;
     }
 
@@ -612,6 +963,7 @@
     if (e.data.type === 'bn-layout-mode') {
       try {
         _switchSbdMode(e.data.mode === 'sbd');
+        _bnRedrawShadowScene(); /* 商品容器換了(.商品範圍 ↔ .bn-kv-frame)，陰影座標系也要重算 */
       } catch (err) {
         console.error('[SBD] 模式切換失敗：', err);
       }
@@ -774,9 +1126,13 @@
 
       /* 讀取畫布與外框的當前樣式 */
       var rootCs = window.getComputedStyle(document.documentElement);
+      /* ★ zw/zh 改用 getBoundingClientRect:人物 pct→px 的分母必須與「pct 記錄端」
+         (postLayoutChange/_reportBoxLayout,用 rect)同源,否則 zone 有 border/padding 時
+         每次重建都帶入系統性小偏移。rect 取不到(隱藏中)才退回 computed。 */
+      var _zr = pzone.getBoundingClientRect();
       var pcs = window.getComputedStyle(pzone);
-      var zw  = parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
-      var zh  = parseFloat(pcs.height) || pzone.offsetHeight || 300;
+      var zw  = _zr.width  || parseFloat(pcs.width)  || pzone.offsetWidth  || 400;
+      var zh  = _zr.height || parseFloat(pcs.height) || pzone.offsetHeight || 300;
 
       /* 2. 使用迴圈依序渲染每一張人物圖 */
       persons.forEach(function(personData, index) {
@@ -822,16 +1178,18 @@
             hPx    = Math.round(mH);
           }
         }
-
         var box = document.createElement('div');
         box.className     = 'bn-person-box bn-person-idx-' + index;
         box.dataset.id    = personData.id || ('person_' + index);  /* ★ ID，供 bn-person-zorder handler 定址 */
         box.dataset.ratio = String(ratio);          /* setupProdDrag 等比縮放用 */
         if (personData.rot !== undefined) box.dataset.rot = personData.rot; /* 旋轉持久化 */
-
-        /* ★ 防呆保留：把手動旗標與百分比座標寫回 box.dataset，讓後續 _applyCompose 能
-           判斷「這個人物是否被手動調整過」而選擇保留。（與商品 box 在 bn-product-add 時一致） */
+        /* ★#3 人物原本還原時未設 dataset.userMoved,導致重建後 coedit safe 保護對人物失效;
+           這裡補上 userMoved 與 coeditApplied,讓「手動調過的人物」重建後仍受保護、
+           「共編套出的人物」重建後仍可被 safe 再更新。 */
         box.dataset.userMoved = personData.userMoved ? '1' : '0';
+        box.dataset.coeditApplied = personData.coeditApplied ? '1' : '0';
+        /* ★ pct 一併存進 dataset:構圖(_applyCompose)會無條件蓋人物位置,
+           事後補套(applyManualProductPositions)需要從 dataset 讀回手動 pct 座標。 */
         if (personData.userMoved && typeof personData.leftPct === 'number') {
           box.dataset.leftPct   = personData.leftPct;
           box.dataset.topPct    = personData.topPct;
@@ -880,38 +1238,12 @@
         setupProdDrag(box, pzone);  /* 讓新生成的每一張人物圖，都具備獨立的拖移/縮放/滾輪能力 */
       });
 
-      /* ==========================================
-      商品數量同步控制（與人物共用邏輯）
-       ========================================== */
-
-       var productEls = Array.from(
-       document.querySelectorAll('.bn-product')
-       );
-
-      /* 防呆：沒有商品直接跳出 */
-       if (productEls.length) {
-
-       var visibleProdCount =
-        Array.isArray(preset.prods)
-       ? preset.prods.length
-       : 0;
-
-       productEls.forEach(function(el, idx){
-
-      /* 超出構圖需求的商品直接隱藏 */
-        if (idx >= visibleProdCount) {
-
-        el.style.display = 'none';
-        el.style.pointerEvents = 'none';
-
-       } else {
-
-        el.style.display = '';
-        el.style.pointerEvents = '';
-       }
-
-  });
-}
+      /* ★ P0 修正（移除壞死段）：原本此處有一段「商品數量同步控制」，
+         誤用了未定義的 preset —— preset 只存在於 _applyCompose() 的 scope，
+         此 message handler 內並沒有它，每次收到 bn-persons 都會拋
+         ReferenceError 中斷後續。且商品的顯示/隱藏剪裁已由 _applyCompose()
+         （依 window.__bnLastPreset）統一負責，此段為重複又失效的邏輯，
+         直接刪除，行為零損失。 */
       /* 確保 zone 屬性正確 */
       pzone.style.overflow = 'visible';
       pzone.style.position = 'relative';
@@ -1137,6 +1469,19 @@
       document.querySelectorAll('.bn-product-shadow-layer').forEach(function(el) {
         el.remove();
       });
+
+      /* 5. 商品即時陰影(ShadowPlugin)顏色——跟背景幾何陰影共用同一個色源
+            (e.data.shadowColor，hex)，不需要另外算色，只是多一個消費者。 */
+      if (e.data.shadowColor && typeof window.ShadowPlugin !== 'undefined') {
+        var _shHex = String(e.data.shadowColor).replace(/^#/, '');
+        if (_shHex.length === 3) _shHex = _shHex[0]+_shHex[0]+_shHex[1]+_shHex[1]+_shHex[2]+_shHex[2];
+        var _shN = parseInt(_shHex, 16);
+        if (!isNaN(_shN)) {
+          var _shR = (_shN >> 16) & 255, _shG = (_shN >> 8) & 255, _shB = _shN & 255;
+          window.ShadowPlugin.setShadowColorRGB(_shR + ',' + _shG + ',' + _shB);
+          _bnRedrawShadowScene();
+        }
+      }
     }
 
   });
@@ -1150,24 +1495,30 @@
      的畫布尺寸不同，直接套用別的畫布量出來的 px 會整個跑掉。*/
   function applyManualProductPositions(prodZone) {
     if (!prodZone) return;
-    var pcs = window.getComputedStyle(prodZone);
-    var zw = parseFloat(pcs.width)  || prodZone.offsetWidth  || 0;
-    var zh = parseFloat(pcs.height) || prodZone.offsetHeight || 0;
-    if (!zw || !zh) return; /* 防呆：畫布尚未有實際尺寸，跳過避免除以 0 / NaN */
-    Array.from(prodZone.querySelectorAll('.bn-prod-box')).forEach(function(box){
-      if (box.dataset.userMoved !== '1' || box.dataset.leftPct === undefined) return;
-      var l = parseFloat(box.dataset.leftPct)   * zw;
-      var t = parseFloat(box.dataset.topPct)    * zh;
-      var w = parseFloat(box.dataset.widthPct)  * zw;
-      var h = parseFloat(box.dataset.heightPct) * zh;
-      /* 防呆：任何一個算出來不是有限數字（NaN/Infinity），直接放棄覆寫，
-         讓商品保留自動排版結果，總比整個消失或飛到畫面外好 */
-      if (![l,t,w,h].every(isFinite)) return;
-      box.style.left   = Math.round(l) + 'px';
-      box.style.top    = Math.round(t) + 'px';
-      box.style.width  = Math.round(w) + 'px';
-      box.style.height = Math.round(h) + 'px';
-    });
+    function _applyPct(zone, selector){
+      if (!zone) return;
+      /* ★ 分母與「pct 記錄端」同源:記錄(postLayoutChange/_reportBoxLayout)用 getBoundingClientRect,
+         這裡也用 rect;若用 getComputedStyle,zone 有 border/padding 時寬高不同 → 系統性小偏移。 */
+      var zrect = zone.getBoundingClientRect();
+      var zw = zrect.width  || zone.offsetWidth  || 0;
+      var zh = zrect.height || zone.offsetHeight || 0;
+      if (!zw || !zh) return; /* 防呆：畫布尚未有實際尺寸 */
+      Array.from(zone.querySelectorAll(selector)).forEach(function(box){
+        if (box.dataset.userMoved !== '1' || box.dataset.leftPct === undefined) return;
+        var l = parseFloat(box.dataset.leftPct)   * zw;
+        var t = parseFloat(box.dataset.topPct)    * zh;
+        var w = parseFloat(box.dataset.widthPct)  * zw;
+        var h = parseFloat(box.dataset.heightPct) * zh;
+        if (![l,t,w,h].every(isFinite)) return;
+        box.style.left   = Math.round(l) + 'px';
+        box.style.top    = Math.round(t) + 'px';
+        box.style.width  = Math.round(w) + 'px';
+        box.style.height = Math.round(h) + 'px';
+      });
+    }
+    _applyPct(prodZone, '.bn-prod-box');
+    /* ★ 人物也補套:人物掛在「商品範圍」(非 SBD 白框),構圖蓋位置後同樣需要以 pct 蓋回 */
+    _applyPct(getProductZone(), '.bn-person-box');
   }
 
   function layoutProducts(pzone) {
@@ -1394,6 +1745,76 @@
   }
 
   /* ════════════════════════════════════════════════════════════
+     商品即時陰影(ShadowPlugin)—— 只畫陰影本體，商品照片仍由既有
+     <img> 顯示。這裡只負責：把「目前所有商品 box 的即時位置」轉成
+     ShadowPlugin 看得懂的 canvas 絕對座標，交給引擎在一張獨立的
+     .bn-shadow-scene-layer canvas 上重繪。
+     ════════════════════════════════════════════════════════════ */
+
+  /* 取得/建立陰影 canvas，並插到「目前商品容器」(.商品範圍 或 SBD 的
+     .bn-kv-frame)正後方。不需要手動湊 z-index 數字：兩種模式下這個
+     容器本身都帶有 z-index>0，positive z-index 元素一律蓋過本畫布
+     (z-index:auto)，跟 DOM 順序無關；唯一需要靠 DOM 順序處理的是
+     SBD 模式下巢狀在 .bn-kv-frame 裡、同樣 z-index:auto 的 .bn-kv-bg
+     ——插在 .bn-kv-frame 之後(含其所有子節點)可以保證比它晚，
+     才會蓋在 KV 底圖上面。 */
+  function _bnShadowCanvas(){
+    var canvasEl = getCanvasEl();
+    if (!canvasEl) return null;
+    var zone = getProdZone();
+    if (!zone || !zone.parentNode) return null;
+    var cv = canvasEl.querySelector('.bn-shadow-scene-layer');
+    if (!cv) {
+      cv = document.createElement('canvas');
+      cv.className = 'bn-shadow-scene-layer';
+      cv.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+    }
+    var W = parseFloat(canvasEl.style.width)  || canvasEl.offsetWidth;
+    var H = parseFloat(canvasEl.style.height) || canvasEl.offsetHeight;
+    if (cv.width  !== W) cv.width  = W;
+    if (cv.height !== H) cv.height = H;
+    if (zone.nextSibling !== cv) zone.parentNode.insertBefore(cv, zone.nextSibling);
+    return cv;
+  }
+
+  var _bnShadowRedrawScheduled = false;
+  function _bnRedrawShadowScene(){
+    if (typeof window.ShadowPlugin === 'undefined') return;
+    if (_bnShadowRedrawScheduled) return;
+    _bnShadowRedrawScheduled = true;
+    requestAnimationFrame(function(){
+      _bnShadowRedrawScheduled = false;
+      var cv = _bnShadowCanvas();
+      if (!cv) return;
+      var ctx = cv.getContext('2d');
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      var canvasEl = getCanvasEl();
+      if (!canvasEl) return;
+      var canvasRect = canvasEl.getBoundingClientRect();
+      var boxes = Array.prototype.slice.call(queryAllProdBox());
+      /* 依目前 z-index 由小到大排序 = 由後到前，符合 renderScene() 的疊放順序約定 */
+      boxes.sort(function(a, b){
+        return (parseInt(a.style.zIndex, 10) || 0) - (parseInt(b.style.zIndex, 10) || 0);
+      });
+      var items = boxes.map(function(box){
+        var r = box.getBoundingClientRect();
+        return {
+          id: box.dataset.id,
+          x: r.left + r.width / 2 - canvasRect.left,   /* 中心 x */
+          y: r.top + r.height - canvasRect.top,          /* 底部 y */
+          w: r.width,
+          h: r.height,
+          rot: parseFloat(box.dataset.rot) || 0,
+          shadowScaleX: parseFloat(box.dataset.shadowScaleX) || 1,
+          shadowScaleY: parseFloat(box.dataset.shadowScaleY) || 1
+        };
+      });
+      window.ShadowPlugin.renderScene(ctx, items);
+    });
+  }
+  window._bnRedrawShadowScene = _bnRedrawShadowScene;
+
+  /* ════════════════════════════════════════════════════════════
      SBD 構圖模式 — KV 視覺白框引擎（v2：改為整張裝飾圖片方案）
      ────────────────────────────────────────────────────────────
      設計原則：
@@ -1594,6 +2015,33 @@
       bg._kvPendingTransform = null;
       _applyKvSliderTransform(bg, pending.tz, pending.tx, pending.ty);
     }
+    /* ★ 2026-08 修「Undo / 暫存還原後 SBD 底圖跳回預設位置，一碰滑桿又對了」
+       ────────────────────────────────────────────────────────────────
+       上面那段 pending 只涵蓋「訊息比圖片早到」的情形。實際回報的是【相反】
+       的順序，而且只在「還原時本來就已經在 SBD 模式」才會發生：
+
+         1. 圖片早就載入完成 → _kvPanZoomState 已存在
+         2. bn-kv-image 把【同一張】 src 重新指派上去（還原一定會重送）
+         3. bn-kv-transform 緊接著到達，因為 state 已存在，守門判斷放行 →
+            立刻套用成功，而且【不會】寫進 _kvPendingTransform
+         4. 稍後 src 重新指派觸發的 onload 才姍姍來遲 → 執行到本函式 →
+            上面的 baseScale 重算把 scale/offset 一併【重置回置中】→
+            這時 _kvPendingTransform 是空的，沒有任何東西把位置補回來
+
+       於是資料完全正確（_kvTransformPerId 好好的）、畫面卻是預設位置；
+       使用者一碰滑桿就重送一次 bn-kv-transform，畫面又跳回正確位置 ——
+       完全吻合回報的現象。
+
+       修法：把「最後一次成功套用的定位」黏在元素上，onload 重置後補回去。
+       ★ 只有在「圖片沒換」時才補：記錄當下的 src 一起比對。使用者【重新上傳
+         新的 KV 底圖】時 src 不同 → 不補、維持重置回置中，這是刻意保留的
+         既有行為（新圖尺寸/比例不同，沿用舊定位沒有意義，見上方註解）。 */
+    else if (bg._kvLastTransform &&
+             bg._kvTransformSrc &&
+             bg._kvTransformSrc === (bg.getAttribute('src') || '')) {
+      var last = bg._kvLastTransform;
+      _applyKvSliderTransform(bg, last.tz, last.tx, last.ty);
+    }
 
     /* 回報「這個版位的 KV 底圖已成功載入、可以互動」給父層側欄，
        側欄收到後才會在這個版位畫布右側長出個別調整滑桿——
@@ -1622,6 +2070,13 @@
     state.offX = -tx * slackX;
     state.offY = -ty * slackY;
     bg._kvClampAndApply(); /* 雙重保險：即使外部傳入異常值，也不會露出窗口底色 */
+
+    /* ★ 記住這次的定位與它對應的圖片,供 _setupKvBgPanZoom 在
+       「同一張圖因為還原被重新指派 src → onload 重置」之後補回來。
+       連 src 一起記,是為了分辨「還原重送同一張」與「使用者換了新圖」——
+       後者本來就該重置回置中。詳見 _setupKvBgPanZoom 內的說明。 */
+    bg._kvLastTransform = { tz: tz, tx: tx, ty: ty };
+    bg._kvTransformSrc  = bg.getAttribute('src') || '';
   }
 
   /* 商品掛載容器：SBD 模式且此版位有背景窗口座標 → 回傳背景窗口
@@ -1754,7 +2209,337 @@
     if (shadowLayer) shadowLayer.style.display = toSbd ? 'none' : '';
   }
 
+  /* ── 外面畫布多選管理(跨 box 共享) ─────────────────────────────────
+     疊加設計:非 Shift 完全走既有單選邏輯(零回歸);多選為 Shift 專屬新分支。
+     這批只做「Shift 多選 + 群組平移」;群組變形(縮放/旋轉)需 anchor-transform,
+     因各版位 iframe 未載入該模組,列後續批(需先於版位 HTML 載入模組)。 */
+  var _multiSel = [];
+  /* ★ 2026-08:記住「最後一次非 Shift 單選」的 box。
+     過去單選與多選是兩個互不相通的狀態:非 Shift 點 A 走的是 _selClear()＋單選路徑,
+     A【從來沒有進入 _multiSel】。於是「點 A → Shift 點 B」之後 _multiSel 只有 B(長度 1),
+     群組框不出現,必須再 Shift 點一次 A 才湊到 2 個 —— 這就是回報的
+     「A>B 連續選取後要再按一次 A 才會跑出多選框」。
+     有了這個變數,Shift 點擊時就能把「已經單選中的那個」一併接續進多選。 */
+  var _singleSel = null;
+  function _hideAllHandles() {
+    var hs = document.querySelectorAll('.bn-prod-box [data-corner], .bn-person-box [data-corner]');
+    Array.prototype.forEach.call(hs, function (h) { h.style.display = 'none'; });
+    /* ★ 多選時一併隱藏單選的旋轉把手(rotate-plugin),只留群組錨點框 */
+    var rhs = document.querySelectorAll('.bn-rot-handle');
+    Array.prototype.forEach.call(rhs, function (h) { h.style.display = 'none'; });
+  }
+  function _selClear() {
+    _multiSel.forEach(function (b) { b.style.outline = '2px solid transparent'; });
+    _multiSel = [];
+    _singleSel = null;
+    _hideAllHandles();          /* ★ 清掉殘留單選 handle,避免蓋住鄰近 box 攔截 Shift 點擊 */
+    _updateGroupAnchor();
+  }
+  function _selToggle(box) {
+    _hideAllHandles();          /* ★ 進入多選先清單選 handle(多選用群組錨點,不需 per-box handle) */
+    /* ★ 接續單選:若目前還沒有多選,但剛剛單選過另一個 box,
+       先把那個 box 併進來,使用者才會覺得「點 A → Shift 點 B ＝ 選了兩個」。 */
+    if (_multiSel.length === 0 && _singleSel && _singleSel !== box) {
+      _multiSel.push(_singleSel);
+      _singleSel.style.outline = '2px solid #FFC107';
+    }
+    var i = _multiSel.indexOf(box);
+    if (i === -1) { _multiSel.push(box); box.style.outline = '2px solid #FFC107'; }
+    else { _multiSel.splice(i, 1); box.style.outline = '2px solid transparent'; }
+    /* 已進入多選狀態,單選記憶就沒有意義了(避免下次 Shift 又把它塞回來) */
+    _singleSel = null;
+    _updateGroupAnchor();
+  }
+  /* 泛化回報(不依賴 setupProdDrag 閉包的 box):群組平移後各成員各自持久化 */
+  function _reportBoxLayout(box) {
+    if (window.parent === window) return;
+    var id = box.dataset.id; if (!id) return;
+    var z = box._dragZone; if (!z) return;
+    var zr = z.getBoundingClientRect();
+    var l = parseFloat(box.style.left) || 0, t = parseFloat(box.style.top) || 0;
+    var w = parseFloat(box.style.width) || 0, h = parseFloat(box.style.height) || 0;
+    var msg = {
+      type: box.classList.contains('bn-person-box') ? 'bn-person-layout' : 'bn-product-layout',
+      id: id, layoutId: urlId,   /* ★ per-版位持久化 */
+      left: l, top: t, width: w, height: h, userMoved: true,
+      coeditApplied: box.dataset.coeditApplied === '1',   /* ★#3 持久化:手動平移後為 '0' → false */
+      rot: parseFloat(box.dataset.rot) || 0
+    };
+    if (zr.width > 0 && zr.height > 0) {
+      msg.leftPct = l / zr.width; msg.topPct = t / zr.height;
+      msg.widthPct = w / zr.width; msg.heightPct = h / zr.height;
+      /* ★ pct 同步寫回 dataset(同 postLayoutChange):讓構圖後補套永遠用最新手動位置 */
+      box.dataset.leftPct = msg.leftPct;   box.dataset.topPct = msg.topPct;
+      box.dataset.widthPct = msg.widthPct; box.dataset.heightPct = msg.heightPct;
+    }
+    if (box.dataset.sizeScale !== undefined) msg.sizeScale = parseFloat(box.dataset.sizeScale) || 1;
+    window.parent.postMessage(msg, '*');
+  }
+  /* 點空白(非 box/非 Shift)清除多選,只綁一次 */
+  var _clearBound = false;
+  function _bindClear() {
+    if (_clearBound) return; _clearBound = true;
+    document.addEventListener('pointerdown', function (e) {
+      if (e.shiftKey) return;
+      if (!e.target.closest) return;
+      /* ★ 點在 box、或錨點層/把手(data-no-capture)上都不清除多選——
+         否則按群組旋轉/縮放把手時,capture 階段會先清掉選取、錨點框瞬間消失、等於點不到。 */
+      if (e.target.closest('.bn-prod-box,.bn-person-box') || e.target.closest('[data-no-capture]')) return;
+      _selClear();
+    }, true);
+  }
+
+  /* ★ 2026-08:把 Undo/Redo 快捷鍵從 iframe 轉發給父層 ────────────────
+     問題:Ctrl+Z / Ctrl+Y 的處理器綁在【父層】document 上,但使用者剛在
+     iframe 裡拖曳完,鍵盤焦點就在 iframe 內 —— keydown 只會在 iframe 的
+     document 觸發,父層永遠收不到,按了完全沒反應。
+     使用者的感受是「要先點畫布外面才會記錄剛才的操作」,但其實歷史【早就
+     寫進去了】(每次拖曳結束都會 postMessage 給父層並觸發 saveHistory),
+     真正沒送達的是「快捷鍵」本身。點畫布外只是把焦點移回父層而已。
+     修法:iframe 收到就轉發給父層,由父層既有的 undoHistory/redoHistory 處理。 */
+  document.addEventListener('keydown', function (e) {
+    if (window.parent === window) return;              /* 獨立開啟版位頁時不處理 */
+    if (!(e.ctrlKey || e.metaKey)) return;
+    /* 畫布上正在直接編輯文字時不攔截,讓瀏覽器原生的文字 undo 生效 */
+    var t = e.target;
+    var tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+    var k = (e.key || '').toLowerCase();
+    if (k === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      window.parent.postMessage({ type: 'bn-undo' }, '*');
+    } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+      e.preventDefault();
+      window.parent.postMessage({ type: 'bn-redo' }, '*');
+    }
+  });
+
+  /* ── 外面畫布:群組(多選 ≥2)錨點縮放 + 旋轉(沿用共編 anchor-transform 模組) ───────
+     單物件維持既有 per-box 角落 handle;此處只在「多選 ≥2」疊加群組錨點框。
+     幾何全在「未旋轉 style 座標(相對 zone px)」運算;旋轉沿用 dataset.rot(與 rotate-plugin 同機制)。
+     zone iframe 未載入 anchor-transform 時靜默略過(graceful)。 */
+  var _atByHost = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+  var _curAT = null, _gStart = null, _gCenter = null;
+  function _getAT(host) {
+    if (!window.AnchorTransform || !host) return null;
+    if (_atByHost && _atByHost.has(host)) return _atByHost.get(host);
+    var at = window.AnchorTransform.create(host);
+    if (_atByHost && at) _atByHost.set(host, at);
+    return at;
+  }
+  /* ══ 旋轉:一律委派 rotate-plugin(單一權威)═══════════════════════════
+     rotate-plugin.js 的核心契約是「只旋轉 box 內層的 <img>,絕不旋轉外層 box」,
+     這樣 box 的 getBoundingClientRect() 永遠是軸對齊 AABB,拖曳/縮放/夾限/
+     群組外框的數學全都不用改。本檔曾有兩處直接寫 box.style.transform='rotate(...)'
+     (共編套用 :811、群組旋轉 :2299)違反這條契約,實際後果:
+       · rotate-plugin 在 attach / img 被替換時會再對 img 套一次同樣角度
+         → 視覺角度變成兩倍(回報的「畫布多選旋轉怪怪的」)
+       · box 跟著轉之後 AABB 變大,四角把手與群組外框都對不上實際圖形
+     共編器沒這個問題,是因為它每次 renderStage() 都從資料模型重建節點、
+     只有一套 transform,自洽 —— 這正好對應「共編器的就正常」。
+
+     ★ rotate-plugin.js 的載入順序排在本檔之後,但這裡是在「呼叫當下」才取用
+       window.RotatePlugin,所以不受載入順序影響;真的取不到時就地退回等效實作。 */
+  function _normRot(d) {                       /* 與 rotate-plugin.normalize 同語意 */
+    d = d % 360;
+    if (d > 180) d -= 360;
+    if (d <= -180) d += 360;
+    return d;
+  }
+  function _applyRot(box, deg) {
+    if (!box) return;
+    if (window.RotatePlugin && window.RotatePlugin.applyRot) { window.RotatePlugin.applyRot(box, deg); return; }
+    box.dataset.rot = String(deg);
+    if (box.style.transform) box.style.transform = '';   /* 契約:外層 box 不帶 rotate */
+    var img = box.querySelector('img');
+    if (!img) return;
+    img.style.transformOrigin = 'center center';
+    img.style.transform = 'rotate(' + deg + 'deg) translateZ(0)';
+  }
+
+  function _groupBBoxStyle() {
+    var minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+    _multiSel.forEach(function (b) {
+      var l = parseFloat(b.style.left) || 0, t = parseFloat(b.style.top) || 0;
+      var w = parseFloat(b.style.width) || 0, h = parseFloat(b.style.height) || 0;
+      if (l < minL) minL = l; if (t < minT) minT = t;
+      if (l + w > maxR) maxR = l + w; if (t + h > maxB) maxB = t + h;
+    });
+    return { x: minL, y: minT, w: maxR - minL, h: maxB - minT };
+  }
+
+  /* ══ 拖曳/變形的夾限策略:單一權威(2026-08 重構)══════════════════════
+     過去「單選平移 / 單選縮放 / 群組平移 / 群組縮放旋轉」四條路徑各自寫一份
+     夾限,規則彼此矛盾,造成兩個實際的 bug:
+
+     ① 群組平移把下緣也鎖死(舊 :2391),但人物的下半身本來就刻意超出畫布。
+        只要選取範圍含人物,群組外框的下緣一開始就已經超界 →
+        不論往哪拖,dy 都被強制成負值 → 整組被往上彈、且完全無法往下移。
+        這就是回報的「多選後被卡在範圍內」。
+     ② 舊的 _clampGroupIntoZone 沒有 .bn-kv-frame(SBD 白框)例外判斷,
+        單選有、群組沒有 → SBD 模式下兩者的夾限基準不一致。
+
+     現在統一為下列政策,四條路徑共用:
+       · 基準框 = 整張畫布 #canvas,而非商品範圍 → 物件可移出商品範圍而不弄丟
+       · SBD 白框(.bn-kv-frame)有 overflow:hidden,拖出去會「隱形消失」→ 退回白框邊界
+       · 下緣:只要牽涉到人物就放開(半身超出畫布是刻意的設計效果)
+       · 群組一律夾「外框」而非逐一夾成員 —— 逐一夾會壓扁隊形 */
+
+  /* 取得夾限基準框(zone 座標系)。回傳 null = 取不到畫布,呼叫端退回 zone 尺寸 */
+  function _canvasBoundsOf(zone) {
+    var cv = document.getElementById('canvas');
+    if (!cv || !zone) return null;
+    /* SBD 白框有 overflow 裁切,拖出白框會「隱形弄丟」→ 該模式退回白框自身邊界 */
+    if (zone.classList && zone.classList.contains('bn-kv-frame')) return null;
+    var cr = cv.getBoundingClientRect(), zr = zone.getBoundingClientRect();
+    return { minX: cr.left - zr.left, minY: cr.top - zr.top,
+             maxX: cr.right - zr.left, maxY: cr.bottom - zr.top };
+  }
+
+  /* ★ 手動操作一律「自由」,只保留一條救援規則(2026-08 第二次調整):
+     物件至少要有 KEEP_GRAB px 留在基準框內,否則整塊移出畫布後
+     就再也點不到、抓不回來了(等於弄丟素材)。
+
+     這條規則同時【自然涵蓋】了人物半身超出畫布的設計效果:
+     人物只要上緣還在畫布內,下半身要垂多長都可以 —— 因此不再需要
+     「人物特例 / freeBottom」那套分支,單選與群組的規則徹底一致。
+
+     ★ 只作用於「手動」路徑(拖曳、四角縮放、群組平移/縮放/旋轉)。
+     自動構圖、共編套用、還原重播都是直接設定座標,不經過這裡,行為不變。 */
+  var KEEP_GRAB = 48;
+
+  /* 算出把 rect 拉回「還抓得到」所需的位移量。完全在框內時回傳 {0,0}(不干涉)。 */
+  function _clampDelta(rect, bounds) {
+    var dx = 0, dy = 0;
+    /* 物件本身比 KEEP_GRAB 還小時,用它自己的尺寸當門檻,避免永遠滿足不了 */
+    var keepX = Math.min(KEEP_GRAB, rect.w);
+    var keepY = Math.min(KEEP_GRAB, rect.h);
+    if (rect.x + rect.w < bounds.minX + keepX) dx = (bounds.minX + keepX) - (rect.x + rect.w);
+    else if (rect.x > bounds.maxX - keepX)     dx = (bounds.maxX - keepX) - rect.x;
+    if (rect.y + rect.h < bounds.minY + keepY) dy = (bounds.minY + keepY) - (rect.y + rect.h);
+    else if (rect.y > bounds.maxY - keepY)     dy = (bounds.maxY - keepY) - rect.y;
+    return { dx: dx, dy: dy };
+  }
+
+  /* 群組整塊夾回基準框:對所有成員套用同一個位移 → 整塊卡住、隊形完全不變 */
+  function _clampGroupIntoZone(zw, zh) {
+    if (!_multiSel.length) return;
+    var zone = _multiSel[0]._dragZone;
+    var bounds = _canvasBoundsOf(zone) ||
+                 { minX: 0, minY: 0, maxX: zw, maxY: (zh || Infinity) };
+    var d = _clampDelta(_groupBBoxStyle(), bounds);
+    if (d.dx || d.dy) _multiSel.forEach(function (b) {
+      b.style.left = ((parseFloat(b.style.left) || 0) + d.dx) + 'px';
+      b.style.top  = ((parseFloat(b.style.top)  || 0) + d.dy) + 'px';
+    });
+  }
+  var _raisedZone = null;
+  function _restoreRaisedZone() {
+    /* 保留:若過去曾抬過 z(舊版行為),還原之。現版不再主動抬。 */
+    if (_raisedZone) {
+      if (_raisedZone.dataset.bnZSaved !== undefined) {
+        _raisedZone.style.zIndex = _raisedZone.dataset.bnZSaved;
+        delete _raisedZone.dataset.bnZSaved;
+      }
+      _raisedZone = null;
+    }
+  }
+  function _updateGroupAnchor() {
+    if (_multiSel.length < 2) { if (_curAT) { _curAT.hide(); _curAT = null; } _restoreRaisedZone(); return; }
+    var zone = _multiSel[0]._dragZone;
+    var at = _getAT(zone);
+    if (!at) { if (_curAT) { _curAT.hide(); _curAT = null; } _restoreRaisedZone(); return; }
+    if (_curAT && _curAT !== at) _curAT.hide();
+    /* ★ 不再抬高容器 z-index:抬高會讓商品/人物蓋過購物專家Bar等設計圖層(回報問題)。
+       設計圖層已改 pointer-events:none,錨點把手可「穿透」設計圖層被點到,故無需抬高即可操作。 */
+    _restoreRaisedZone();
+    _curAT = at;
+    at.show(_groupBBoxStyle(), _groupCallbacks(zone));
+  }
+  function _groupCallbacks(zone) {
+    return {
+      onStart: function () {
+        var zr = zone.getBoundingClientRect();
+        _gStart = { zw: zr.width, zh: zr.height, members: _multiSel.map(function (b) {
+          return { b: b,
+            l: parseFloat(b.style.left) || 0, t: parseFloat(b.style.top) || 0,
+            w: parseFloat(b.style.width) || 0, h: parseFloat(b.style.height) || 0,
+            rot: parseFloat(b.dataset.rot) || 0 };
+        }) };
+        var bb = _groupBBoxStyle();
+        _gCenter = { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
+      },
+      onResize: function (factor, ax, ay) {          /* 四角等比、對角固定;整組同倍率 */
+        if (!_gStart) return;
+        _gStart.members.forEach(function (m) {
+          m.b.style.width  = (m.w * factor) + 'px';
+          m.b.style.height = (m.h * factor) + 'px';
+          m.b.style.left = (ax + (m.l - ax) * factor) + 'px';
+          m.b.style.top  = (ay + (m.t - ay) * factor) + 'px';
+        });
+        _clampGroupIntoZone(_gStart.zw, _gStart.zh);
+        if (_curAT) _curAT.reposition(_groupBBoxStyle());
+      },
+      onRotate: function (deg) {                      /* 繞群組中心公轉 + 各自自轉(dataset.rot) */
+        if (!_gStart || !_gCenter) return;
+        var rad = deg * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+        _gStart.members.forEach(function (m) {
+          var dx = (m.l + m.w / 2) - _gCenter.x, dy = (m.t + m.h / 2) - _gCenter.y;
+          var ncx = _gCenter.x + dx * cos - dy * sin;
+          var ncy = _gCenter.y + dx * sin + dy * cos;
+          m.b.style.left = (ncx - m.w / 2) + 'px';
+          m.b.style.top  = (ncy - m.h / 2) + 'px';
+          /* ★ 只轉內層 img(委派 rotate-plugin),外層 box 保持軸對齊 —— 見 _applyRot 上方說明。
+             角度收斂到 (-180,180],與單選旋轉把手一致;deg 是「相對起始的累積角度」,
+             每一幀都以 m.rot 為基準重算,所以 normalize 不會造成飄移。 */
+          var nrot = _normRot(m.rot + deg);
+          _applyRot(m.b, nrot);
+        });
+        if (_curAT) _curAT.reposition(_groupBBoxStyle());
+      },
+      onEnd: function () {                            /* 各成員持久化 + 清 coeditApplied(手動變形) */
+        _multiSel.forEach(function (b) {
+          b.dataset.userMoved = '1'; b.dataset.coeditApplied = '0';
+          _reportBoxLayout(b);
+        });
+        _gStart = null; _gCenter = null;
+        if (_curAT) _curAT.reposition(_groupBBoxStyle());
+      }
+    };
+  }
+  /* 轉存前隱藏選取 UI(外框 + 群組錨點),避免烤進輸出;回傳還原函式 */
+  function _hideSelUIForCapture() {
+    var saved = [];
+    var boxes = document.querySelectorAll('.bn-prod-box,.bn-person-box');
+    Array.prototype.forEach.call(boxes, function (b) {
+      if (b.style.outline && b.style.outline !== '2px solid transparent') {
+        saved.push([b, b.style.outline]); b.style.outline = '2px solid transparent';
+      }
+    });
+    var hadAnchor = !!_curAT;
+    if (_curAT) _curAT.hide();
+    /* ★ 轉存期間把「群組選取時抬高的容器 z」暫時還原,避免商品在輸出圖蓋住文字;完成後再抬回 */
+    var rz = _raisedZone, rzPrev = null;
+    if (rz) { rzPrev = rz.style.zIndex; rz.style.zIndex = (rz.dataset.bnZSaved !== undefined ? rz.dataset.bnZSaved : ''); }
+    return function restore() {
+      saved.forEach(function (p) { p[0].style.outline = p[1]; });
+      if (rz) rz.style.zIndex = rzPrev;
+      if (hadAnchor) _updateGroupAnchor();
+    };
+  }
+
   function setupProdDrag(box,zone){
+    /* ★ 手動拖曳「可出商品範圍、不弄丟」:夾限基準從 zone 換成整張畫布(#canvas)。
+       此 helper 回傳 zone 座標系下的畫布邊界(iframe 模式 canvas transform:none,rect 座標=style 座標);
+       取不到 canvas 時回退 null → 沿用 zone 邊界(等同舊行為)。
+       自動構圖/共編套用直接設定 zone 內位置 → 天然收回範圍。 */
+    /* ★ 2026-08:改為委派給模組層的 _canvasBoundsOf(單一權威)。
+       原本這支定義在 setupProdDrag 內部,每個 box 建立時各生一份閉包,
+       而群組那條路徑(_clampGroupIntoZone)又自己寫了第三份、且漏掉
+       .bn-kv-frame 的 SBD 例外 → 同一個畫面上單選與群組的夾限基準不一致。
+       收斂成一支之後,四條路徑(單選平移/單選縮放/群組平移/群組縮放旋轉)
+       共用同一份規則,不會再各自演化。 */
+    function _canvasBounds(z){ return _canvasBoundsOf(z); }
     /* ★ 關鍵修正：zone 不能只靠閉包鎖死——商品在切換 SBD 模式時會被
        搬到不同容器（.商品範圍 ↔ .bn-kv-frame），但這個函式只在商品
        「第一次建立」時呼叫一次，重新掛載並不會重新呼叫 setupProdDrag。
@@ -1777,6 +2562,7 @@
       var msg = {
         type: box.classList.contains('bn-person-box') ? 'bn-person-layout' : 'bn-product-layout',
         id: id,
+        layoutId: urlId,   /* ★ per-版位持久化:讓 parent 知道這份 layout 屬於哪個版位 */
         left: l, top: t, width: w, height: h,
       };
       /* ★ 額外用「相對於當下畫布容器的百分比」記錄一份座標：
@@ -1792,8 +2578,15 @@
         msg.topPct    = t / zr.height;
         msg.widthPct  = w / zr.width;
         msg.heightPct = h / zr.height;
+        /* ★ pct 同步寫回 box dataset:構圖後補套(applyManualProductPositions)讀的是 dataset,
+           若只發給 parent 不寫回,晚到的構圖重排會讓補套用「舊 pct」蓋回上次位置 → 小偏移。 */
+        box.dataset.leftPct   = msg.leftPct;
+        box.dataset.topPct    = msg.topPct;
+        box.dataset.widthPct  = msg.widthPct;
+        box.dataset.heightPct = msg.heightPct;
       }
       msg.userMoved = box.dataset.userMoved === '1';
+      msg.coeditApplied = box.dataset.coeditApplied === '1';   /* ★#3 持久化:手動操作後為 '0' → false */
       if (box.dataset.sizeScale !== undefined) msg.sizeScale = parseFloat(box.dataset.sizeScale) || 1;
       msg.rot = parseFloat(box.dataset.rot) || 0; /* 旋轉持久化：位置變更時一併回報角度 */
       if (box.classList.contains('bn-person-box') && box.dataset.zOrder !== undefined) {
@@ -1804,22 +2597,41 @@
 
     /* 人物圖：允許垂直向下超出 zone（下半身可超出畫布被裁切） */
     var isPersonBox = box.classList.contains('bn-person-box');
+    _bindClear();
     box.addEventListener('pointerdown',function(e){
-      if(e.target.dataset.corner) return;
-      e.stopPropagation();
+      /* ★ 修正「多選要點好幾次」:Shift 多選需優先於殘留角落 handle。
+         只有「非 Shift」點到 handle 才讓給單物件縮放;Shift 一律走多選,不被 handle 攔截。 */
+      if(e.target.dataset.corner && !e.shiftKey) return;
+      /* ★ Shift+點 = 加/移多選(持久,不啟動拖曳) */
+      if(e.shiftKey){ e.stopPropagation(); _selToggle(box); return; }
       var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
       var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
-      drag={type:'move',sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height};
+      /* ★ 已多選且點的是成員之一 → 群組平移(保留選取,記各成員起始) */
+      if(_multiSel.length>1 && _multiSel.indexOf(box)!==-1){
+        e.stopPropagation();
+        drag={type:'group-move',sx:e.clientX,sy:e.clientY,zw:zr.width,zh:zr.height,cb:_canvasBounds(curZone),
+          members:_multiSel.map(function(b){ var r=b.getBoundingClientRect();
+            return {b:b,l:r.left-zr.left,t:r.top-zr.top,w:r.width,h:r.height}; })};
+        box.setPointerCapture(e.pointerId); return;
+      }
+      /* 否則:清多選、走既有單選(零回歸) */
+      _selClear();
+      _singleSel = box;   /* ★ 記住這次單選,供之後 Shift 接續成多選(見 _selToggle) */
+      e.stopPropagation();
+      drag={type:'move',sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height,cb:_canvasBounds(curZone)};
       /* 選中：顯示藍框 + handle */
       box.querySelectorAll('[data-corner]').forEach(function(h){ h.style.display='block'; });
       box.setPointerCapture(e.pointerId); box.style.outline='2px solid '+(isPersonBox?'#ee4d2d':'#4a90e2');
     });
     box.querySelectorAll('[data-corner]').forEach(function(h){
       h.addEventListener('pointerdown',function(e){
+        /* ★ Shift 多選優先:落在 handle 上的 Shift 點擊不被 handle 吃掉(不 stopProp、不啟動縮放),
+           讓事件冒泡到 box 觸發 _selToggle。修「從第一張商品(handle 顯示中)開始多選要點好幾次」。 */
+        if(e.shiftKey) return;
         e.stopPropagation();
         var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
         var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
-        drag={type:'resize',corner:h.dataset.corner,sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height,ratio:parseFloat(box.dataset.ratio)||1};
+        drag={type:'resize',corner:h.dataset.corner,sx:e.clientX,sy:e.clientY,l:br.left-zr.left,t:br.top-zr.top,w:br.width,h:br.height,zw:zr.width,zh:zr.height,ratio:parseFloat(box.dataset.ratio)||1,cb:_canvasBounds(curZone)};
         h.setPointerCapture(e.pointerId); box.style.outline='2px solid '+(isPersonBox?'#ee4d2d':'#4a90e2'); e.preventDefault();
       });
       h.addEventListener('pointermove',function(e){
@@ -1835,45 +2647,70 @@
         var l=drag.l,t=drag.t;
         if(c.includes('w')) l=drag.l+(drag.w-w);
         if(c.includes('n')) t=drag.t+(drag.h-bh);
-        l=Math.max(0,Math.min(drag.zw-w,l));
-        /* 人物：t 可超出 zone 底部（讓下半身超出畫布） */
-        t=isPersonBox?Math.max(0,t):Math.max(0,Math.min(drag.zh-bh,t));
+        /* ★ 手動縮放同樣「完全自由」,只保證至少留一小塊在框內(見 _clampDelta) */
+        var rb = drag.cb || {minX:0,minY:0,maxX:drag.zw,maxY:drag.zh};
+        var rd = _clampDelta({x:l, y:t, w:w, h:bh}, rb);
+        l += rd.dx; t += rd.dy;
         box.style.left=l+'px'; box.style.top=t+'px';
         box.style.width=w+'px'; box.style.height=bh+'px';
+        _bnRedrawShadowScene();
       });
       h.addEventListener('pointerup',function(){
-        if (drag) { box.dataset.userMoved='1'; postLayoutChange(); }
+        if (drag) { box.dataset.userMoved='1'; box.dataset.coeditApplied='0'; /* ★#3 手動縮放→脫離共編、重新受 safe 保護 */ postLayoutChange(); }
         drag=null;
       });
     });
     box.addEventListener('pointermove',function(e){
-      if(!drag||drag.type!=='move') return;
-      box.style.left=Math.max(0,Math.min(drag.zw-drag.w,drag.l+e.clientX-drag.sx))+'px';
-      /* 人物：允許向下超出 zone（下半身超出畫布被裁切以模擬半身效果）*/
-      var newTop=drag.t+e.clientY-drag.sy;
-      box.style.top=(isPersonBox?Math.max(0,newTop):Math.max(0,Math.min(drag.zh-drag.h,newTop)))+'px';
+      if(!drag) return;
+      /* ★ 群組平移:夾「外框」而非逐一夾成員(逐一夾會壓扁隊形),整塊卡住、隊形不變。
+         ★ 2026-08 修正:改走與單選共用的 _clampDelta,人物半身例外不再消失。
+            舊版把下緣也鎖死 → 只要選取含人物(下半身本來就超出畫布),
+            外框下緣一開始就超界 → 不論往哪拖 gdy 都被夾成負值 →
+            整組往上彈且無法往下移,就是回報的「多選後卡在範圍內」。 */
+      if(drag.type==='group-move'){
+        var gdx=e.clientX-drag.sx, gdy=e.clientY-drag.sy;
+        var minL=Infinity,minT=Infinity,maxR=-Infinity,maxB=-Infinity;
+        drag.members.forEach(function(m){ if(m.l<minL)minL=m.l; if(m.t<minT)minT=m.t;
+          if(m.l+m.w>maxR)maxR=m.l+m.w; if(m.t+m.h>maxB)maxB=m.t+m.h; });
+        var gb = drag.cb || {minX:0,minY:0,maxX:drag.zw,maxY:drag.zh};
+        /* 先套用滑鼠位移,再把「位移後的外框」夾回基準框,取得補償量 */
+        var moved = { x:minL+gdx, y:minT+gdy, w:maxR-minL, h:maxB-minT };
+        var d = _clampDelta(moved, gb);
+        gdx += d.dx; gdy += d.dy;
+        drag.members.forEach(function(m){ m.b.style.left=(m.l+gdx)+'px'; m.b.style.top=(m.t+gdy)+'px'; });
+        if(_curAT) _curAT.reposition(_groupBBoxStyle());   /* ★ 錨點框跟隨群組平移 */
+        _bnRedrawShadowScene();
+        return;
+      }
+      if(drag.type!=='move') return;
+      /* ★ 手動拖曳「完全自由」:可以拖出商品範圍、也可以拖出畫布,
+         只由 _clampDelta 保證至少留一小塊在框內(否則就再也抓不回來)。
+         人物半身超出畫布因此自然成立,不必再走 isPersonBox 特例。 */
+      var mb = drag.cb || {minX:0,minY:0,maxX:drag.zw,maxY:drag.zh};
+      var nx = drag.l + e.clientX - drag.sx;
+      var ny = drag.t + e.clientY - drag.sy;
+      var md = _clampDelta({x:nx, y:ny, w:drag.w, h:drag.h}, mb);
+      box.style.left = (nx + md.dx) + 'px';
+      box.style.top  = (ny + md.dy) + 'px';
+      _bnRedrawShadowScene();
     });
     box.addEventListener('pointerup',function(){
+      /* ★ 群組平移結束:各成員標記 userMoved + 各自持久化回報;保留多選框(持久選取) */
+      if(drag && drag.type==='group-move'){
+        drag.members.forEach(function(m){ m.b.dataset.userMoved='1'; m.b.dataset.coeditApplied='0'; /* ★#3 手動群組平移→重新受保護 */ _reportBoxLayout(m.b); });
+        drag=null; _updateGroupAnchor(); return;   /* ★ 平移後重定位錨點框 */
+      }
       if(drag) {
         box.dataset.userMoved='1'; /* 有拖移/縮放 → 記錄手動定位 */
+        box.dataset.coeditApplied='0'; /* ★#3 手動拖曳→脫離共編、重新受 safe 保護 */
         postLayoutChange();
       }
       drag=null;
       box.style.outline='2px solid transparent';
     });
-    box.addEventListener('wheel',function(e){ box.dataset.userMoved='1';
-      e.preventDefault();
-      var curZone = box._dragZone || zone; /* ★ 每次操作前重新讀取當下的容器 */
-      var zr=curZone.getBoundingClientRect(),br=box.getBoundingClientRect();
-      var sc=e.deltaY<0?1.08:.93,r=parseFloat(box.dataset.ratio)||1;
-      var w=Math.max(40,Math.min(br.width*sc,zr.width*.95)),bh=w/r;
-      if(bh<30){bh=30;w=bh*r;} if(!isPersonBox&&bh>zr.height*.95){bh=zr.height*.95;w=bh*r;}
-      var cx=(br.left-zr.left)+br.width/2,cy=(br.top-zr.top)+br.height/2;
-      box.style.left=Math.max(0,Math.min(cx-w/2,zr.width-w))+'px';
-      box.style.top =Math.max(0,Math.min(cy-bh/2,zr.height-bh))+'px';
-      box.style.width=w+'px'; box.style.height=bh+'px';
-      postLayoutChange();
-    },{passive:false});
+    /* ★ 需求 3：已移除滾輪縮放（原 wheel listener）——滾輪易誤觸,縮放改由
+       四角 handle 拖曳。商品與人物共用 setupProdDrag,故此處移除同時涵蓋兩者;
+       移除後滾輪不再 preventDefault,回歸頁面預設捲動行為。 */
   }
 
 
@@ -2188,14 +3025,8 @@
  * 接收並套用全域構圖預設 (完全根除資產殘留與多餘 Slot 穿幫問題)
  * @param {Object} rawPreset 來自父控制介面的原始預設配置資料
  */
-function _applyCompose(rawPreset, opts) {
+function _applyCompose(rawPreset) {
   if (!rawPreset) return;
-
-  /* ★ 防呆保留機制：preserveManual 預設 true（保留使用者手動調整的圖層）。
-     只有「使用者主動點構圖按鈕並確認覆蓋」時，bn.html 才送 preserveManual:false，
-     此時才清除手動旗標讓全部圖層回歸自動排版。
-     自動觸發（上傳新圖／商品數量變動）與狀態還原一律走預設 true，不弄丟手動位置。*/
-  var preserveManual = !(opts && opts.preserveManual === false);
 
   var pzone = getProductZone();
   if (!pzone) return;
@@ -2212,18 +3043,6 @@ function _applyCompose(rawPreset, opts) {
      實際尺寸換算已全部交給 layoutProducts()（它自己讀取容器尺寸），
      這裡只需要拿到容器參照本身，供下方 querySelector 與 layoutProducts() 使用。 */
   var prodZone = getProdZone();
-
-  /* ★ 主動重排（preserveManual=false）：先清除所有圖層的手動旗標與百分比座標，
-     讓後續排版把每個圖層都當「未調整」重新定位；同時避免殘留的舊 leftPct
-     在下一次自動重排時又被還原成過期位置。 */
-  if (!preserveManual) {
-    var _clrManual = function(box){
-      box.dataset.userMoved = '0';
-      ['leftPct','topPct','widthPct','heightPct'].forEach(function(k){ delete box.dataset[k]; });
-    };
-    Array.prototype.forEach.call(pzone.querySelectorAll('.bn-person-box'), _clrManual);
-    if (prodZone) Array.prototype.forEach.call(prodZone.querySelectorAll('.bn-prod-box'), _clrManual);
-  }
 
   /* ★ 不再自己判斷橫式/直式、不再二次覆寫 preset 的 x/h！
      bn.html 的 applyComposeBroadcast() 已經用每個版位回報的真實
@@ -2252,12 +3071,6 @@ function _applyCompose(rawPreset, opts) {
     // 符合構圖數量，執行排版定位 (永遠以 Slot 0 第一張圖為最優先)
     var pConfig = preset.persons[currentSlot];
     personBox.style.display = 'block';
-
-    /* ★ 防呆保留：此人物被手動調整過(userMoved) 且處於保留模式 → 維持目前手動位置，
-       不套用構圖預設座標。（人物重建時已把 userMoved 寫回 dataset，見人物渲染段） */
-    if (preserveManual && personBox.dataset.userMoved === '1') {
-      return;
-    }
 
     var pRatio   = parseFloat(personBox.dataset.ratio) || 1;
     var pH       = (pConfig.h / 100) * zh;
@@ -2314,17 +3127,27 @@ function _applyCompose(rawPreset, opts) {
     }
   });
 
-  // 6. 強制調用一次陰影與邊界重繪機制，維持跨版位視覺一致性
+  // 6. 強制調用一次邊界重繪機制，維持跨版位視覺一致性(陰影重繪見下方第 8 步)
   if (typeof layoutProducts === 'function') {
     layoutProducts(prodZone);
   }
-
-  /* ★ 防呆保留：重排後把「手動調整過的商品」還原回其百分比座標。
-     applyManualProductPositions 內部只處理 userMoved==='1' 的商品，未調整的不受影響。
-     放在 layoutProducts() 之後，確保任何觸發 compose 的路徑都能保留手動商品位置，
-     不再只依賴 bn-product-add 專屬的 setTimeout 補救。 */
-  if (preserveManual && typeof applyManualProductPositions === 'function') {
-    applyManualProductPositions(prodZone);
+  /* ★ 7. 構圖套完後補套「手動 pct 位置」(商品+人物):
+     構圖無條件蓋座標,但暫存讀回/Undo 還原時,字型載入、resize、商品數量變化
+     等任何晚到的 _smartAutoLayout→_applyCompose 都會把已還原的手動位置蓋掉 → 位置跑掉。
+     這裡讓「手動(userMoved)且帶 pct」的物件永遠在構圖之後被蓋回正確位置。
+     使用者主動按「構圖」時,parent 會先下 resetManual 清掉手動標記(見 bn-compose handler),
+     此補套自然無事 → 維持「按構圖=收回範圍」的既定行為。 */
+  if (typeof applyManualProductPositions === 'function') {
+    applyManualProductPositions(getProdZone());
+  }
+  /* ★ 8. 陰影全量重繪:陰影畫在一張長期存在的 <canvas class="bn-shadow-scene-layer">
+     上,唯一會清掉舊像素的地方就是 _bnRedrawShadowScene() 裡的 clearRect()。
+     構圖把商品 box 搬到新位置後若不重繪,上一輪的陰影像素會原地留下 → 殘影
+     (使用者一拖曳商品就消失,是因為 setupProdDrag 每個 pointermove 都會重繪,
+     順手補做了這次缺的清除)。放在第 6、7 步之後,確保量到的是最終落點;
+     函式內建 requestAnimationFrame 節流,重複呼叫安全。 */
+  if (typeof _bnRedrawShadowScene === 'function') {
+    _bnRedrawShadowScene();
   }
 }
   /* 日期跟隨主標：
@@ -2385,15 +3208,32 @@ function _applyCompose(rawPreset, opts) {
     var cv=document.getElementById('canvas');
     if(!cv){if(cb)cb(null);return;}
 
+    /* ★ 截圖前確保字體就緒，避免匯出圖 FOUT。fonts.ready 一定會 settle
+       （字體載入失敗也會轉為 loaded，不會無限掛），且 init 端已 await 過一次，
+       此處為最終渲染的雙保險。尚未就緒 → 等 ready 後重呼叫自己
+       （屆時 status 已是 loaded，不會再進此分支，最多遞迴一次）。 */
+    if (document.fonts && document.fonts.status !== 'loaded' &&
+        document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+      document.fonts.ready.then(function(){ doCapture(cb); });
+      return;
+    }
+
     /* ★ 匯出前最後一道保險：重算蝦導播 LOGO 等比尺寸。
        html2canvas 不看 object-fit，會把原圖硬塞進 <img> 的 box，
-       所以 box 比例必須先校正好，否則匯出圖上的 LOGO 會被拉伸。 */
+       所以 box 比例必須先校正好，否則匯出圖上的 LOGO 會被拉伸。
+       擺在字體 gate 之後：字體就緒才是真正會出圖的那一趟，不必多算一次。 */
     _fitAllLogoImgs();
 
     /* 讀取 KB 上限（config.css 的 --max-kb，單位 KB，0 = 無限制）*/
     var maxKb = parseFloat(
       getComputedStyle(document.documentElement).getPropertyValue('--max-kb')||'') || 0;
     var TARGET_BYTES = maxKb > 0 ? maxKb * 1024 : 0;
+
+    /* ★ 轉存前隱藏選取 UI(外框 + 群組錨點框),避免烤進輸出圖;then/catch 都還原 */
+    var _restoreSel = _hideSelUIForCapture();
+    /* ★ 人物/商品圖等比校正(Bug 2.1)。同樣 then/catch 都必須還原 ——
+       這個「只在截圖當下套用」是刻意的,原因見 _fitBoxImgsForCapture() 上方註解。 */
+    var _restoreBoxFit = _fitBoxImgsForCapture();
 
     html2canvas(cv,{scale:1,useCORS:true,allowTaint:true,backgroundColor:null,
       width:parseFloat(cv.style.width)||cv.offsetWidth,
@@ -2403,6 +3243,8 @@ function _applyCompose(rawPreset, opts) {
         return el.dataset.noCapture === 'true' || !!el.dataset.corner;
       }})
     .then(function(c){
+      _restoreBoxFit();
+      _restoreSel();
       /* Base64 大小估算（省去 header 後 × 0.75）*/
       function getBytes(url){
         var hdr = 'data:image/jpeg;base64,';
@@ -2433,7 +3275,7 @@ function _applyCompose(rawPreset, opts) {
       }
       if(cb) cb(bestUrl);
     })
-    .catch(function(){if(cb)cb(null);});
+    .catch(function(){ _restoreBoxFit(); _restoreSel(); if(cb)cb(null); });
   }
 
   /**

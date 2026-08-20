@@ -140,6 +140,19 @@
     function broadcast(msg){document.querySelectorAll('.preview-block iframe').forEach(function(f){try{f.contentWindow.postMessage(msg,'*');}catch(e){}});}
     function broadcastTo(id,msg){var f=document.getElementById('iframe-'+id);if(f)try{f.contentWindow.postMessage(msg,'*');}catch(e){}}
 
+    /* 陰影光源角度(左/中/右)：全域設定，按鈕在 insertProductUI() 建立 */
+    var _shadowAngleBtns = null;
+    function _syncShadowAngleBtns(){
+      if (!_shadowAngleBtns) return;
+      var cur = window._bnShadowAngle || 'left';
+      _shadowAngleBtns.forEach(function(b){
+        var active = b.dataset.angle === cur;
+        b.style.background = active ? '#ee4d2d' : '#222';
+        b.style.borderColor = active ? '#ee4d2d' : '#444';
+        b.style.color = active ? '#fff' : '#ccc';
+      });
+    }
+
     /* ══ Logo 上傳 ══ */
     function insertLogoUI(){
       var scroll=document.getElementById('sidebar-scroll');
@@ -170,6 +183,15 @@
         '    </div>',
         '    Logo 加白底',
         '  </label>',
+        /* ★ 規格 3.1:白框留白可調（回報「logo 無法拉大白框至合適大小」）
+           ★ 同批做過的「廠商 LOGO 尺寸」滑桿已移除 —— 放大會撐寬 .廠商LOGO範圍,
+             而 .LOGO範圍 是 justify-content:center,整排會重新置中,
+             連帶把蝦導播 LOGO 推離設計的左側對齊線。要重做必須先解決這點。 */
+        '  <div id="bn-logo-pad-row" style="display:flex;align-items:center;gap:8px;padding:4px 0 4px;font-size:11px;color:var(--text2);">',
+        '    <span style="flex-shrink:0;">白框留白</span>',
+        '    <input type="range" id="bn-logo-pad" min="0" max="40" step="1" value="10" style="flex:1;min-width:0;">',
+        '    <span id="bn-logo-pad-val" style="flex-shrink:0;width:30px;text-align:right;">10%</span>',
+        '  </div>',
         '  <div class="bn-prod-list" id="bn-logo-list"></div>',
         '</div>',
       ].join('');
@@ -197,6 +219,7 @@
         wbToggle.addEventListener('click', function(){
           window._bnLogoWhiteBg = !window._bnLogoWhiteBg;
           syncWhiteBgToggle();
+          window._bnSyncLogoSliders && window._bnSyncLogoSliders();
           if (!window._bnLogos.length) return;
           /* 重新合成所有 LOGO 並廣播 */
           _applyWhiteBgToAll(function(){
@@ -206,6 +229,43 @@
           });
         });
       }
+
+      /* ══ 規格 3.1:白框留白滑桿 ═══════════════════════════════════
+         改的是「白底合成當下的 padding」,所以每次調整都要重新合成
+         (白底是烤進 PNG 的,不是 CSS)。合成是非同步的 canvas 作業,
+         故用 change 而非 input —— 拖曳過程中不重複合成,放開才做一次。 */
+      var padInp   = document.getElementById('bn-logo-pad');
+      var padVal   = document.getElementById('bn-logo-pad-val');
+
+      window._bnSyncLogoSliders = function(){
+        var p = document.getElementById('bn-logo-pad');
+        var pv= document.getElementById('bn-logo-pad-val');
+        var padPct = Math.round(((typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10) * 100);
+        if (p)  p.value  = String(padPct);
+        if (pv) pv.textContent = padPct + '%';
+        /* 白底關著時留白沒有作用,淡出提示(仍可調,開啟白底後立即生效) */
+        var row = document.getElementById('bn-logo-pad-row');
+        if (row) row.style.opacity = window._bnLogoWhiteBg ? '1' : '.4';
+      };
+
+      if (padInp) {
+        padInp.addEventListener('input', function(){
+          if (padVal) padVal.textContent = this.value + '%';
+        });
+        padInp.addEventListener('change', function(){
+          window._bnLogoPad = (parseFloat(this.value) || 0) / 100;
+          if (!window._bnLogoWhiteBg || !window._bnLogos.length) {
+            if (typeof saveHistory === 'function') saveHistory();
+            return;   /* 白底沒開 → 只記下設定值,不需重新合成 */
+          }
+          _applyWhiteBgToAll(function(){
+            renderLogoList();
+            broadcast({type:'bn-logos', logos:window._bnLogos});
+            if (typeof saveHistory === 'function') saveHistory();
+          });
+        });
+      }
+      window._bnSyncLogoSliders();
       drop.addEventListener('dragover',function(e){e.preventDefault();this.classList.add('drag');});
       drop.addEventListener('dragleave',function(){this.classList.remove('drag');});
       drop.addEventListener('drop',function(e){
@@ -646,25 +706,58 @@
         /* 合成白底 */
         var img = new Image();
         img.onload = function() {
+          /* ★ 2026-08 修正:白底「切著邊」的真正原因
+             ──────────────────────────────────────────────────────────
+             舊版:畫布 = LOGO 原始尺寸,白色圓角矩形再從邊緣「向內」縮 pad,
+             最後 LOGO 以滿版 drawImage(img,0,0) 蓋上去。
+             結果白底其實比 LOGO【小】了 pad ——
+             LOGO 最外圈 pad 寬的那一圈底下是透明的、沒有白色,
+             看起來就像白底被切掉一角。這不是視覺錯覺,是座標畫錯邊。
+
+             新版:畫布 = LOGO 尺寸 +【向外】各加 pad,白底鋪滿整個畫布,
+             LOGO 置中畫在 (pad, pad),於是四周都有真正的白色留白。
+
+             ★ pad 改為隨 LOGO 尺寸等比,不再固定 4px:
+             各家 LOGO 的原始像素尺寸差異極大(幾百到上千 px),而它們之後
+             還會被等面積排版以【不同倍率】縮放。固定 4px 在大圖上等於沒有,
+             縮放後更是趨近 0 —— 這也是「加了白底卻看不太出來」的主因。
+             改用短邊的 10%(下限 6px)後,不同 LOGO 縮放後的白邊粗細
+             才會落在相近的量級。 */
+          /* ★ 規格 3.1「logo 無法拉大白框至合適大小 / 太小會縮減到 logo 圖案」:
+             留白比例改為使用者可調(側欄滑桿),不再寫死 10%。
+             0 = 完全貼齊 LOGO(等同沒有白邊),0.40 = 短邊 40% 的厚白框。
+             下限仍保 6px,避免小圖在低比例下白邊細到看不見。 */
+          var natW = img.naturalWidth, natH = img.naturalHeight;
+          var padRatio = (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10;
+          padRatio = Math.max(0, Math.min(0.40, padRatio));
+          var pad  = padRatio <= 0 ? 0
+                   : Math.max(6, Math.round(Math.min(natW, natH) * padRatio));
+          var cw   = natW + pad * 2;
+          var ch   = natH + pad * 2;
+          /* 圓角:跟著 pad 走,並夾住上限避免半徑超過邊長一半導致路徑異常 */
+          var r    = Math.min(Math.round(pad * 1.8), Math.floor(Math.min(cw, ch) / 2));
+
           var c = document.createElement('canvas');
-          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.width = cw; c.height = ch;
           var ctx = c.getContext('2d');
-          /* 白底圓角矩形：padding 4px，radius 10px */
-          var pad = 4, r = 10;
+
+          /* 白色圓角矩形鋪滿整個畫布(不再內縮) */
           ctx.fillStyle = '#FFFFFF';
           ctx.beginPath();
-          ctx.moveTo(r + pad, pad);
-          ctx.lineTo(c.width - r - pad, pad);
-          ctx.quadraticCurveTo(c.width - pad, pad, c.width - pad, r + pad);
-          ctx.lineTo(c.width - pad, c.height - r - pad);
-          ctx.quadraticCurveTo(c.width - pad, c.height - pad, c.width - r - pad, c.height - pad);
-          ctx.lineTo(r + pad, c.height - pad);
-          ctx.quadraticCurveTo(pad, c.height - pad, pad, c.height - r - pad);
-          ctx.lineTo(pad, r + pad);
-          ctx.quadraticCurveTo(pad, pad, r + pad, pad);
+          ctx.moveTo(r, 0);
+          ctx.lineTo(cw - r, 0);
+          ctx.quadraticCurveTo(cw, 0, cw, r);
+          ctx.lineTo(cw, ch - r);
+          ctx.quadraticCurveTo(cw, ch, cw - r, ch);
+          ctx.lineTo(r, ch);
+          ctx.quadraticCurveTo(0, ch, 0, ch - r);
+          ctx.lineTo(0, r);
+          ctx.quadraticCurveTo(0, 0, r, 0);
           ctx.closePath();
           ctx.fill();
-          ctx.drawImage(img, 0, 0);
+
+          /* LOGO 置中,四周各留 pad */
+          ctx.drawImage(img, pad, pad);
           lg.src = c.toDataURL('image/png');
           if (!--pending && cb) cb();
         };
@@ -703,20 +796,38 @@
       sec.innerHTML=[
         '<div class="s-section" style="margin-top:8px">商品圖（最多2張）</div>',
         '<div class="bn-section">',
-        '  <label id="bn-auto-shadow-row" style="display:flex;align-items:center;gap:8px;padding:2px 0 8px;cursor:pointer;">',
-        '    <input type="checkbox" id="bn-auto-shadow" style="accent-color:#ee4d2d;width:14px;height:14px;cursor:pointer;flex-shrink:0;">',
-        '    <span style="font-size:11px;color:var(--text2,#a0a0a0);">新增商品自動加陰影</span>',
-        '  </label>',
+        '  <div id="bn-shadow-angle-row" style="display:flex;align-items:center;gap:8px;padding:2px 0 8px;">',
+        '    <span style="font-size:11px;color:var(--text2,#a0a0a0);flex-shrink:0;">陰影光源</span>',
+        '    <div style="display:flex;gap:4px;">',
+        '      <button type="button" class="bn-shadow-angle-btn" data-angle="left" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">左</button>',
+        '      <button type="button" class="bn-shadow-angle-btn" data-angle="top" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">中</button>',
+        '      <button type="button" class="bn-shadow-angle-btn" data-angle="right" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">右</button>',
+        '    </div>',
+        '  </div>',
         '  <button id="bn-prod-open-btn">＋ 上傳商品圖</button>',
         '  <div class="bn-prod-list" id="bn-prod-list"></div>',
         '</div>',
       ].join('');
       if(target)scroll.insertBefore(sec,target);else scroll.appendChild(sec);
       document.getElementById('bn-prod-open-btn').addEventListener('click',openModal);
-      var _asCb=document.getElementById('bn-auto-shadow');
-      if(_asCb){ _asCb.checked=(window._bnAutoShadow!==false); _asCb.addEventListener('change',function(){window._bnAutoShadow=this.checked;}); }
+      _shadowAngleBtns = sec.querySelectorAll('.bn-shadow-angle-btn');
+      _shadowAngleBtns.forEach(function(b){
+        b.addEventListener('click', function(){
+          window._bnShadowAngle = b.dataset.angle;
+          broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle});
+          _syncShadowAngleBtns();
+          if (typeof saveHistory === 'function') saveHistory();
+        });
+      });
+      _syncShadowAngleBtns();
       buildModal();
     }
+
+    /* ── 規格 5.2「整體一鍵等比例縮放」已於 2026-08-19 依使用者要求移除 ──
+       實作過(以商品範圍底部中央為錨點的相似變換,驗證過可逆且不累積誤差),
+       但實際使用效果不佳,故整支拿掉。若日後要重做,備份在
+       scratchpad/bak-before-revert52/,重點是「錨點該取哪裡」——
+       繞畫布中心會讓縮小時所有素材集體離地漂浮,那是當初選底部錨點的原因。 */
 
     function buildModal(){
       if(document.getElementById('bn-prod-modal'))return;
@@ -939,7 +1050,6 @@
       window._bnProducts=[];
 
       var sizeRatios=skipRatio?null:[1,0.85,0.72];
-    var newIds=[];
       for(var i=0;i<orderedItems.length;i++){
         var item=orderedItems[i];
         var src=item.src;
@@ -963,7 +1073,6 @@
         if(item._polaroid)_prod._polaroid=item._polaroid; /* 拍立得配方隨商品保存，供 undo/暫存/重編 */
         window._bnProducts.push(_prod);
         broadcast({type:'bn-product-add',id:id,src:src,ratio:item.ratio||1,name:item.name,index:i,sizeScale:sizeScale,position:pos,rot:_prod.rot||0});
-        if(!item.fromExisting) newIds.push(id);
         await new Promise(function(r){setTimeout(r,50);});
       }
       renderProdList();
@@ -972,16 +1081,6 @@
       _broadcastBestCompose(window._bnProducts.length);
       /* 商品狀態更新後立即記錄歷史 */
       if (typeof saveHistory === 'function') saveHistory();
-      /* 自動加入陰影（若勾選）*/
-      if(window._bnAutoShadow!==false){
-        var _newIdsForShadow=newIds.slice();
-        setTimeout(function(){
-          _newIdsForShadow.forEach(function(id){
-            var pp=window._bnProducts.find(function(x){return x.id===id;});
-            if(pp&&!pp._shadowOrigSrc) generateProductShadow(id);
-          });
-        },400);
-      }
     }
 
     /* 大中小位置標籤 */
@@ -1095,21 +1194,44 @@
             },pp._polaroid);
           };})(p.id));
         }else{
-          editBtn.textContent='編輯';editBtn.title='裁切・去背・擦除・影子';
+          editBtn.textContent='編輯';editBtn.title='裁切・去背・擦除';
           editBtn.addEventListener('click',(function(pid){return function(){
             openProductEditor(pid);
           };})(p.id));
         }
 
-        /* 影子按鈕：有陰影→點擊移除，無陰影→點擊生成 */
-        var shadowBtn=document.createElement('button');
-        shadowBtn.textContent = p._shadowOrigSrc ? '✕影子' : '＋影子';
-        shadowBtn.title = p._shadowOrigSrc ? '移除陰影' : '生成貼合商品的陰影';
-        shadowBtn.addEventListener('click',(function(pid){ return function(){
-          var pp=window._bnProducts.find(function(x){return x.id===pid;});
-          if(pp&&pp._shadowOrigSrc){ removeProductShadow(pid); }
-          else{ generateProductShadow(pid); }
-        };})(p.id));
+        /* 陰影縮放微調：X/Y 各一條滑桿，只影響陰影寬度/拖曳長度，
+           不影響商品照片本體大小(引擎見 shadow-plugin.js drawGroundShadow 的
+           spw/sph vs pw/ph 兩軌)。全排版共用同一個值，input 只更新顯示數字，
+           change 才真的送出去(沿用 LOGO 白框留白滑桿的既有慣例)。 */
+        var shadowScaleWrap=document.createElement('div');
+        shadowScaleWrap.style.cssText='flex-basis:100%;display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2,#a0a0a0);';
+        var sxLabel=document.createElement('span');sxLabel.textContent='陰影寬';sxLabel.style.flexShrink='0';
+        var sxInput=document.createElement('input');sxInput.type='range';sxInput.min='30';sxInput.max='200';sxInput.step='5';
+        sxInput.style.cssText='flex:1;min-width:0;';
+        sxInput.value=String(Math.round((typeof p.shadowScaleX==='number'?p.shadowScaleX:1)*100));
+        var sxVal=document.createElement('span');sxVal.textContent=sxInput.value+'%';sxVal.style.cssText='flex-shrink:0;width:32px;text-align:right;';
+        var syLabel=document.createElement('span');syLabel.textContent='長';syLabel.style.flexShrink='0';
+        var syInput=document.createElement('input');syInput.type='range';syInput.min='30';syInput.max='200';syInput.step='5';
+        syInput.style.cssText='flex:1;min-width:0;';
+        syInput.value=String(Math.round((typeof p.shadowScaleY==='number'?p.shadowScaleY:1)*100));
+        var syVal=document.createElement('span');syVal.textContent=syInput.value+'%';syVal.style.cssText='flex-shrink:0;width:32px;text-align:right;';
+        sxInput.addEventListener('input',function(){ sxVal.textContent=sxInput.value+'%'; });
+        syInput.addEventListener('input',function(){ syVal.textContent=syInput.value+'%'; });
+        (function(pid){
+          function commit(){
+            var pp=window._bnProducts.find(function(x){return x.id===pid;});
+            if(!pp) return;
+            pp.shadowScaleX=parseFloat(sxInput.value)/100;
+            pp.shadowScaleY=parseFloat(syInput.value)/100;
+            broadcast({type:'bn-product-shadow-scale',id:pid,shadowScaleX:pp.shadowScaleX,shadowScaleY:pp.shadowScaleY});
+            if (typeof saveHistory === 'function') saveHistory();
+          }
+          sxInput.addEventListener('change',commit);
+          syInput.addEventListener('change',commit);
+        })(p.id);
+        shadowScaleWrap.appendChild(sxLabel);shadowScaleWrap.appendChild(sxInput);shadowScaleWrap.appendChild(sxVal);
+        shadowScaleWrap.appendChild(syLabel);shadowScaleWrap.appendChild(syInput);shadowScaleWrap.appendChild(syVal);
 
         var rmBtn=document.createElement('button');rmBtn.textContent='移除';rmBtn.className='rm';
         rmBtn.addEventListener('click',function(){
@@ -1156,7 +1278,7 @@
         moveWrap.appendChild(upBtn);
         moveWrap.appendChild(downBtn);
 
-        row.appendChild(img);row.appendChild(infoWrap);row.appendChild(moveWrap);row.appendChild(editBtn);row.appendChild(shadowBtn);row.appendChild(rmBtn);
+        row.appendChild(img);row.appendChild(infoWrap);row.appendChild(moveWrap);row.appendChild(editBtn);row.appendChild(rmBtn);row.appendChild(shadowScaleWrap);
         list.appendChild(row);
       });
     }
@@ -1200,10 +1322,14 @@
         p.ratio=trimmed.ratio;
         renderProdList();
         if(typeof onDone==='function') onDone(p);   /* 共編回填 */
-        broadcast({type:'bn-product-remove',id:p.id});
+        /* ★ per-版位:不再 remove+add(會刪掉各版位 box、位置全丟且攤平頂層值);
+           bn-product-add 已支援就地更新 → 逐 iframe 發自己版位的 payload,只換圖、位置保住。 */
         setTimeout(function(){
           var idx=window._bnProducts.indexOf(p);
-          broadcast({type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale||1,position:p.position||0,rot:p.rot||0});
+          document.querySelectorAll('.preview-block iframe').forEach(function(f){
+            var lid = parseInt(String(f.id||'').replace('iframe-',''), 10);
+            try { f.contentWindow.postMessage(_bnBuildProdAddMsg(p, idx, lid), '*'); } catch(e){}
+          });
           if (typeof saveHistory === 'function') saveHistory();
         },50);
       };
@@ -1249,10 +1375,13 @@
             p.ratio=trimmed.ratio;
             renderProdList();
             if(typeof onDone==='function') onDone(p);   /* ★ 供共編回填:編輯存回後通知呼叫端 */
-            broadcast({type:'bn-product-remove',id:p.id});
+            /* ★ per-版位:同換圖——就地更新、逐 iframe 發自己版位 payload,只換圖、位置保住 */
             setTimeout(function(){
               var idx=window._bnProducts.indexOf(p);
-              broadcast({type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale||1,position:p.position||0,rot:p.rot||0});
+              document.querySelectorAll('.preview-block iframe').forEach(function(f){
+                var lid = parseInt(String(f.id||'').replace('iframe-',''), 10);
+                try { f.contentWindow.postMessage(_bnBuildProdAddMsg(p, idx, lid), '*'); } catch(e){}
+              });
               if (typeof saveHistory === 'function') saveHistory();
             },50);
           };
@@ -1264,199 +1393,7 @@
       window.HBNProductEditorPlugin.open(img);
     }
 
-
-
-    /* ══ 商品陰影生成 ══════════════════════════════════════════
-       算法：
-         1. 從商品 alpha 提取形狀，偏移（右 3%、下 4%）
-         2. 以背景色深 18% 填入形狀
-         3. 套用對角漸層遮罩：左下不透明 → 右上透明
-         4. blur(6px) 柔化邊緣
-         5. 合成：陰影底層 + 原圖疊上
-       背景色變更時自動重算（broadcastColors hook）
-    ══════════════════════════════════════════════════════════ */
-
-    /* 取陰影色：背景色降低 18% lightness */
-    function getShadowColor(){
-      var bg = (window.colorState && window.colorState.canvasBg) || '#6bc0ec';
-      if(!/^#[0-9a-fA-F]{6}$/.test(bg)) bg = '#6bc0ec';
-      var r=parseInt(bg.slice(1,3),16), g=parseInt(bg.slice(3,5),16), b=parseInt(bg.slice(5,7),16);
-      var rN=r/255, gN=g/255, bN=b/255;
-      var max=Math.max(rN,gN,bN), min=Math.min(rN,gN,bN);
-      var h=0, s=0, l=(max+min)/2;
-      if(max!==min){
-        var d=max-min;
-        s=l>0.5?d/(2-max-min):d/(max+min);
-        if(max===rN) h=(gN-bN)/d+(gN<bN?6:0);
-        else if(max===gN) h=(bN-rN)/d+2;
-        else h=(rN-gN)/d+4;
-        h/=6;
-      }
-      /* 降低亮度 18% */
-      l=Math.max(0, l-0.28); /* 深化 28%（原 18% + 追加 10%）*/
-      /* HSL → RGB */
-      function hue2rgb(p,q,t){ if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; }
-      var q2=l<0.5?l*(1+s):l+s-l*s, p2=2*l-q2;
-      var rr=Math.round(hue2rgb(p2,q2,h+1/3)*255);
-      var gg=Math.round(hue2rgb(p2,q2,h)*255);
-      var bb=Math.round(hue2rgb(p2,q2,h-1/3)*255);
-      return 'rgb('+rr+','+gg+','+bb+')';
-    }
-
-    function generateProductShadow(pid){
-      var p=window._bnProducts.find(function(x){return x.id===pid;});
-      if(!p) return;
-      /* 若已有陰影，從原圖重新生成（避免疊加）*/
-      var srcToUse = p._shadowOrigSrc || p.src;
-      var img=new Image();
-      img.onload=function(){ doApplyShadow(img, p, srcToUse); };
-      img.onerror=function(){ console.warn('[BN] shadow: 圖片載入失敗'); };
-      img.src=srcToUse;
-    }
-
-    function doApplyShadow(img, p, origSrc){
-      var W=img.naturalWidth, H=img.naturalHeight;
-      var shadowBlur=18, padBlur=shadowBlur+8;
-
-      /* ── Step 0：掃描像素找出「實際底部 Y」────────────────────
-         去背圖底部有大量透明像素，直接用 H 當 pivot 會讓
-         陰影出現在畫布底部，而不是商品底部。
-         此處從最後一行往上掃，找到第一個 alpha>15 的行。       */
-      var tmpC=document.createElement('canvas');
-      tmpC.width=W; tmpC.height=H;
-      tmpC.getContext('2d').drawImage(img,0,0,W,H);
-      var px=tmpC.getContext('2d').getImageData(0,0,W,H).data;
-      var botY=H-1;
-      outer: for(var y=H-1;y>=0;y--){
-        for(var x=0;x<W;x++){
-          if(px[(y*W+x)*4+3]>15){ botY=y; break outer; }
-        }
-      }
-
-      /* ── Step 1：陰影參數 ──────────────────────────────────── */
-      var offX=Math.round(W*0.04); /* 陰影略偏右（光從右上→左下投）*/
-      var offY=Math.round(H*0.025);/* 略偏下，讓陰影貼合底部外型   */
-      /* 畫布：原圖寬 + 右側延伸（梯度空間）+ blur 邊距 */
-      var extraW=Math.round(W*0.18)+padBlur;
-      var extraH=Math.round((H-botY)*0.5+H*0.06)+padBlur;
-      var cW=W+extraW, cH=H+extraH;
-
-      var shadowColor=getShadowColor();
-
-      /* ── Step 2：建立陰影形狀（商品輪廓偏移）────────────────── */
-      var sc=document.createElement('canvas'); sc.width=cW; sc.height=cH;
-      var sCtx=sc.getContext('2d');
-      sCtx.drawImage(img, offX, offY); /* 以偏移位置畫入陰影形狀 */
-
-      /* 填入陰影色（保留 alpha 輪廓）*/
-      sCtx.globalCompositeOperation='source-in';
-      sCtx.fillStyle=shadowColor;
-      sCtx.fillRect(0,0,cW,cH);
-      sCtx.globalCompositeOperation='source-over';
-
-      /* ── Step 3：斜向漸層遮罩（下左深 → 右上透）──────────────
-         問題根源：之前終點用畫布角落 (cW, 0)，陰影右半部落在
-         梯度 80%+ 位置直接透明。
-         修法：終點改用「商品範圍的 70% 寬度 × 20% 高度」，
-         讓梯度在陰影自身尺寸內完成消散，不跨整個畫布。    */
-      sCtx.globalCompositeOperation='destination-in';
-      /* 起點：陰影實際底部左側（最不透明）
-         終點：商品 70% 寬度處 × 頂部 20% 高度（向右上消散）*/
-      var gX1=0,         gY1=botY+offY;
-      var gX2=0,     gY2=botY*0.15;
-      var grad=sCtx.createLinearGradient(gX1,gY1,gX2,gY2);
-      grad.addColorStop(0,    'rgba(0,0,0,0.95)');
-      grad.addColorStop(0.22, 'rgba(0,0,0,0.82)');
-      grad.addColorStop(0.52, 'rgba(0,0,0,0.40)');
-      grad.addColorStop(0.80, 'rgba(0,0,0,0.10)');
-      grad.addColorStop(1,    'rgba(0,0,0,0)');
-      sCtx.fillStyle=grad;
-      sCtx.fillRect(0,0,cW,cH);
-      sCtx.globalCompositeOperation='source-over';
-
-      /* ── Step 4：blur 柔化 + 原圖疊上 ── */
-      var fc=document.createElement('canvas'); fc.width=cW; fc.height=cH;
-      var fCtx=fc.getContext('2d');
-      fCtx.filter='blur('+shadowBlur+'px)';
-      fCtx.drawImage(sc,0,0);
-      fCtx.filter='none';
-      fCtx.drawImage(img,0,0,W,H);
-
-      /* ── 對最終合成圖做 inline alpha trim ────────────────────────
-         直接掃描 canvas 像素，找出包含陰影的緊湊 bbox，
-         不需 async Image 載入，與 trimAlpha 邏輯一致         */
-      var fData=fCtx.getImageData(0,0,cW,cH).data;
-      var tx0=cW,ty0=cH,tx1=-1,ty1=-1;
-      for(var ty=0;ty<cH;ty++){
-        for(var tx=0;tx<cW;tx++){
-          if(fData[(ty*cW+tx)*4+3]>10){
-            if(tx<tx0)tx0=tx;if(tx>tx1)tx1=tx;
-            if(ty<ty0)ty0=ty;if(ty>ty1)ty1=ty;
-          }
-        }
-      }
-      var finalSrc,finalRatio;
-      if(tx1>=tx0&&ty1>=ty0){
-        var trimFc=document.createElement('canvas');
-        trimFc.width=tx1-tx0+1;trimFc.height=ty1-ty0+1;
-        trimFc.getContext('2d').drawImage(fc,tx0,ty0,trimFc.width,trimFc.height,0,0,trimFc.width,trimFc.height);
-        finalSrc=trimFc.toDataURL('image/png');
-        finalRatio=trimFc.width/trimFc.height;
-      }else{
-        finalSrc=fc.toDataURL('image/png');
-        finalRatio=cW/cH;
-      }
-
-      p._shadowOrigSrc=origSrc;
-      p._shadowColor=shadowColor;
-      p.src=finalSrc;
-      p.ratio=finalRatio;
-
-      renderProdList();
-      /* 用 bn-product-update 就地更新，不重置使用者手動調整的位置 */
-      broadcast({type:'bn-product-update',id:p.id,src:p.src,ratio:p.ratio});
-    }
-
-
-    /* 移除陰影：從 _shadowOrigSrc 恢復原始圖，就地更新不重置位置 */
-    function removeProductShadow(pid){
-      var p=window._bnProducts.find(function(x){return x.id===pid;});
-      if(!p||!p._shadowOrigSrc) return;
-      var origSrc=p._shadowOrigSrc;
-      var img=new Image();
-      img.onload=function(){
-        var trimmed=trimAlpha(img);
-        p.src=trimmed.src;
-        p.ratio=trimmed.ratio;
-        delete p._shadowOrigSrc;
-        delete p._shadowColor;
-        renderProdList();
-        broadcast({type:'bn-product-update',id:p.id,src:trimmed.src,ratio:trimmed.ratio});
-      };
-      img.src=origSrc;
-    }
-
-    /* 背景色變更時自動重新生成陰影 */
-    (function hookShadowAutoUpdate(){
-      var _lastShadowBg=null;
-      var orig=window.broadcastColors;
-      if(typeof orig!=='function') return;
-      window.broadcastColors=function(){
-        orig.apply(this,arguments);
-        var bg=window.colorState&&window.colorState.canvasBg;
-        if(!bg||bg===_lastShadowBg) return;
-        var shadowed=(window._bnProducts||[]).filter(function(p){return !!p._shadowOrigSrc;});
-        if(!shadowed.length) return;
-        _lastShadowBg=bg;
-        /* debounce 400ms（避免拖動色票時頻繁重算）*/
-        clearTimeout(hookShadowAutoUpdate._t);
-        hookShadowAutoUpdate._t=setTimeout(function(){
-          shadowed.forEach(function(p){ generateProductShadow(p.id); });
-        },400);
-      };
-    })();
-
-    /* ── 人物圖編輯器（與商品圖相同的裁切/去背/擦除/影子功能）──
+    /* ── 人物圖編輯器（與商品圖相同的裁切/去背/擦除功能）──
        ★ 修正：系統已由單人物 window._bnPerson 升級為多人物陣列 window._bnPersons，
        原本兩個函式仍寫死讀取 window._bnPerson（永遠是 undefined），導致編輯按鈕點擊無反應。
        現在改為依照呼叫端傳入的 person 物件（含 id）精準定位，支援多人物各自獨立編輯。 */
@@ -1674,23 +1611,89 @@
            修法：跟 _bnRebroadcastProducts() 用同一套規則——只有
            p.userMoved 為真時才附上百分比座標，讓 layout-runtime.js
            收到後用 applyManualProductPositions() 覆寫回正確位置。*/
-        window._bnProducts.forEach(function(p,idx){broadcastTo(id,{type:'bn-product-add',id:p.id,src:p.src,ratio:p.ratio,name:p.name,index:idx,sizeScale:p.sizeScale,position:p.position||0,zOrder:p.zOrder||0,rot:p.rot||0,
-          userMoved: !!p.userMoved,
-          coeditApplied: !!p.coeditApplied,   /* ★#3 共編/手動之別隨重建送回,safe 保護才不會因重建失效 */
-          leftPct: p.userMoved ? p.leftPct : undefined,
-          topPct: p.userMoved ? p.topPct : undefined,
-          widthPct: p.userMoved ? p.widthPct : undefined,
-          heightPct: p.userMoved ? p.heightPct : undefined});});
-        /* ★ 修正：人物圖已升級為多人物陣列 _bnPersons，原本單數 _bnPerson 永遠是 undefined，
-           會導致新建立的 iframe（新增版位 / 重新整理）收不到目前已上傳的人物圖。
-           改為比照商品圖邏輯，整批送出 bn-persons（layout-runtime.js 已支援此事件型別）*/
-        if(window._bnPersons&&window._bnPersons.length){broadcastTo(id,{type:'bn-persons',persons:window._bnPersons});}
+        /* ★ per-版位修正(攤平主凶):此補播在 iframe ready 才觸發,時間點晚於整批重播,
+           原本補的是「頂層值」(=最後一次任何版位的操作)→ 把 per-版位重播的正確結果蓋掉
+           → 有動到的被同步攤平到所有版位。改用共用 builder:此 iframe(版位 id)只拿自己的 layout。 */
+        window._bnProducts.forEach(function(p,idx){ broadcastTo(id, _bnBuildProdAddMsg(p, idx, id)); });
+        if(window._bnPersons&&window._bnPersons.length){broadcastTo(id,{type:'bn-persons',persons:_bnBuildPersonsPayload(id)});}
+        /* 每個 iframe 都有自己獨立的 ShadowPlugin 實例，光源角度要單獨補送 */
+        broadcastTo(id,{type:'bn-shadow-angle',preset:window._bnShadowAngle||'left'});
         setTimeout(function(){
           var order=window._bnProducts.slice().sort(function(a,b){return (a.zOrder||0)-(b.zOrder||0);}).map(function(p){return p.id;});
           broadcastTo(id,{type:'bn-product-zorder',order:order});
         },100);
       },200);
     };
+
+    /* ══ per-版位 payload builder(共用):ready 補播 / 暫存重播 / 還原重播 一律走這裡 ══
+       語義:物件「有 layouts 維度」時,某版位無記錄=該版位沒動過 → userMoved:false、無 pct、rot 0
+       (吃自動排版/預設 slot),【絕不】退回頂層值(頂層=最後一次任何版位的操作,退回=攤平)。
+       只有整個物件完全沒有 layouts(舊暫存檔)才退頂層,行為同舊版。 */
+    function _bnBuildProdAddMsg(p, idx, lid){
+      var hasLayouts = p.layouts && Object.keys(p.layouts).length > 0;
+      var L = (hasLayouts && !isNaN(lid)) ? (p.layouts[lid] || null) : null;
+      var um, rot, ss, ca, pct;
+      if (hasLayouts) {
+        um  = L ? !!L.userMoved : false;
+        rot = (L && typeof L.rot === 'number') ? L.rot : 0;
+        /* ★ 2026-08 修正(規格文件 Bug 1.2「JSON 重載後商品尺寸自動還原預設」的根因):
+           這裡原本是 `: 1` —— 寫死退回 1,既不取 per-版位值、也不取頂層值。
+           症狀:只要商品在「任何一個版位」被拖過(於是 p.layouts 產生、hasLayouts 變真),
+           其餘「沒被拖過」的版位在重播時就拿不到 layouts[該版位],尺寸一律被打成 1,
+           而不是它原本的自動配圖比例(sizeRatios[i],常見 0.72)。
+           因為只有重播路徑會重算 payload(暫存重載 / Undo / iframe re-ready),
+           編輯當下 iframe 的 DOM 還是舊值,所以現象才會是「預覽正常、重載才跑掉」。
+
+           退回頂層是安全的:sizeScale 全程沒有任何 per-版位編輯行為 ——
+           layout-runtime.js 只在 bn-product-add 時寫一次 box.dataset.sizeScale(:567),
+           之後回報位置時原封echo 回來(:1977/:2191),從不修改它;
+           使用者調大小走的是 widthPct/heightPct(那才是真正 per-版位、且本來就不該退回)。
+           故 L.sizeScale 與 p.sizeScale 恆等,退回頂層不會造成跨版位「攤平」。
+           同檔下方的 zOrder(見本函式 return 區)本來就是這樣寫,這裡屬漏改。 */
+        ss  = (L && typeof L.sizeScale === 'number') ? L.sizeScale
+            : (typeof p.sizeScale === 'number' ? p.sizeScale : 1);
+        ca  = L ? !!L.coeditApplied : false;
+        pct = (um && L) ? L : null;
+      } else {
+        um  = !!p.userMoved; rot = p.rot || 0; ss = p.sizeScale || 1;
+        ca  = !!p.coeditApplied; pct = um ? p : null;
+      }
+      return {type:'bn-product-add', id:p.id, src:p.src, ratio:p.ratio,
+        name:p.name, index:idx, position:p.position||0,
+        sizeScale: ss, rot: rot, userMoved: um, coeditApplied: ca,
+        zOrder: (L && typeof L.zOrder === 'number') ? L.zOrder : (p.zOrder||0),
+        /* 陰影縮放微調:刻意不走 per-版位 layouts 覆寫(單一商品全排版共用同一個值),
+           跟 rot/位置那些「每個版位各自記」的欄位不同,不需要疊加 4 檔案協定的複雜度。 */
+        shadowScaleX: (typeof p.shadowScaleX === 'number') ? p.shadowScaleX : 1,
+        shadowScaleY: (typeof p.shadowScaleY === 'number') ? p.shadowScaleY : 1,
+        leftPct:   pct ? pct.leftPct   : undefined,
+        topPct:    pct ? pct.topPct    : undefined,
+        widthPct:  pct ? pct.widthPct  : undefined,
+        heightPct: pct ? pct.heightPct : undefined};
+    }
+    function _bnBuildPersonsPayload(lid){
+      return (window._bnPersons||[]).map(function(p){
+        var hasLayouts = p.layouts && Object.keys(p.layouts).length > 0;
+        var L = (hasLayouts && !isNaN(lid)) ? (p.layouts[lid] || null) : null;
+        var um, rot, ca, pct;
+        if (hasLayouts) {
+          um  = L ? !!L.userMoved : false;
+          rot = (L && typeof L.rot === 'number') ? L.rot : 0;
+          ca  = L ? !!L.coeditApplied : false;
+          pct = (um && L) ? L : null;
+        } else {
+          um  = !!p.userMoved; rot = p.rot || 0; ca = !!p.coeditApplied; pct = um ? p : null;
+        }
+        var out = { id:p.id, src:p.src, ratio:p.ratio,
+          zOrder: (L && typeof L.zOrder === 'number') ? L.zOrder : (p.zOrder||0),
+          userMoved: um, coeditApplied: ca, rot: rot };
+        if (pct) {
+          out.leftPct = pct.leftPct; out.topPct = pct.topPct;
+          out.widthPct = pct.widthPct; out.heightPct = pct.heightPct;
+        }
+        return out;
+      });
+    }
 
     /* ── init ── */
     function init(){
@@ -1738,17 +1741,13 @@
     };
 
     window._bnBroadcastPerson = function(){
-      /* ★ 同商品邏輯：只把「使用者手動拖移/縮放過」的人物百分比座標帶過去，
-         沒被動過的人物繼續讓 layout-runtime.js 用 config.css 的預設 slot 排版 */
-      var persons = (window._bnPersons||[]).map(function(p){
-        var out = { id:p.id, src:p.src, ratio:p.ratio, zOrder:p.zOrder||0, userMoved: !!p.userMoved, coeditApplied: !!p.coeditApplied, rot: p.rot||0 };
-        if (p.userMoved) {
-          out.leftPct = p.leftPct; out.topPct = p.topPct;
-          out.widthPct = p.widthPct; out.heightPct = p.heightPct;
-        }
-        return out;
+      /* ★ per-版位重播(同商品):每個 iframe 取「自己版位」的人物 layout(p.layouts[lid]),
+         沒有才退回頂層欄位。修「所有版位人物吃同一來源」。 */
+      var frames = document.querySelectorAll('.preview-block iframe');
+      Array.prototype.forEach.call(frames, function(f){
+        var lid = parseInt(String(f.id||'').replace('iframe-',''), 10);
+        try { f.contentWindow.postMessage({type:'bn-persons', persons:_bnBuildPersonsPayload(lid)}, '*'); } catch(e){}
       });
-      broadcast({type:'bn-persons', persons:persons});
     };
 
     window._bnRebroadcastProducts = function(){
@@ -1759,25 +1758,22 @@
         return (a.position||0)-(b.position||0);
       });
       setTimeout(function(){
+        /* ★ per-版位重播:每個 iframe 取「自己版位」的 layout(p.layouts[lid]),沒有才退回頂層欄位。
+           修「上傳暫存後所有版位吃同一來源」——例:只轉 FB 的商品1,重播後只有 FB 帶那個旋轉。 */
+        var frames = document.querySelectorAll('.preview-block iframe');
         reordered.forEach(function(p, idx){
-          /* ★ 只有使用者真的手動拖移/縮放過（userMoved）才把百分比座標一起帶過去，
-             讓 layout-runtime.js 用「相對於當下畫布尺寸」還原位置，
-             不然沒被動過的商品會被強制鎖死座標，反而失去自適應排版能力 */
-          broadcast({type:'bn-product-add', id:p.id, src:p.src, ratio:p.ratio,
-            name:p.name, index:idx, sizeScale:p.sizeScale||1,
-            position:p.position||0, zOrder:p.zOrder||0, rot:p.rot||0,
-            userMoved: !!p.userMoved,
-            coeditApplied: !!p.coeditApplied,   /* ★#3 重播商品時保留共編/手動之別 */
-            leftPct: p.userMoved ? p.leftPct : undefined,
-            topPct: p.userMoved ? p.topPct : undefined,
-            widthPct: p.userMoved ? p.widthPct : undefined,
-            heightPct: p.userMoved ? p.heightPct : undefined});
+          Array.prototype.forEach.call(frames, function(f){
+            var lid = parseInt(String(f.id||'').replace('iframe-',''), 10);
+            try { f.contentWindow.postMessage(_bnBuildProdAddMsg(p, idx, lid), '*'); } catch(e){}
+          });
         });
         /* z-index */
         var order = (window._bnProducts||[]).slice().sort(function(a,b){
           return (a.zOrder||0)-(b.zOrder||0);
         }).map(function(p){ return p.id; });
         broadcast({type:'bn-product-order', order:order});
+        /* 每個 iframe 有自己獨立的 ShadowPlugin 實例，還原/重播時要重新告知光源角度 */
+        broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle||'left'});
 
         /* ★ 改用 saveHistory()(去抖動+去重+還原中抑制):原本 _bnPushHistoryState(true) 是 force、
            繞過去重,還原時(+200ms、還原鎖已在 100ms 解除)會塞一筆幽靈歷史 → 破壞 undo/redo、
@@ -1785,6 +1781,13 @@
            會被去重略過,不再污染。 */
         if (typeof saveHistory === 'function') saveHistory();
       }, 200);
+    };
+
+    /* 光源角度(左/中/右)：全域設定，供 bn.html 還原 Undo/暫存狀態後呼叫，
+       重新告知每個 iframe 各自獨立的 ShadowPlugin 實例。 */
+    window._bnBroadcastShadowAngle = function(){
+      broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle||'left'});
+      _syncShadowAngleBtns();
     };
   });
 })();

@@ -529,9 +529,13 @@
             cs.subText    = p.subText;
             cs.dateText   = p.dateText;
             cs.brandText  = p.brandText;
-            cs.barBg      = p.barBg;
-            cs.barText    = p.barText;
-            cs.shadowColor = p.shadowColor;
+            /* ★ 規格 4.3 / 3.2:主播名 Bar 與商品陰影現在可由使用者在側欄自訂
+               (bn.html 的 COLOR_FIELDS)。使用者親手挑過就會上鎖,這裡必須尊重,
+               否則換一次背景色就把人家調好的顏色洗掉 —— 那正是這兩條回報的老問題
+               的鏡像版本。未上鎖時維持原本的自動連動(Bar 取副標色)。
+               鎖定狀態由 bn.html 的 applyColor 寫入,並隨快照持久化(在 colorState 內)。 */
+            if (!cs.barBgLocked) { cs.barBg = p.barBg; cs.barText = p.barText; }
+            if (!cs.shadowLocked) cs.shadowColor = p.shadowColor;
             /* 重繪側欄色票點 */
             if (typeof global.renderColorPickers === 'function') {
               global.renderColorPickers();
