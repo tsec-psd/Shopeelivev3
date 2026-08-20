@@ -720,7 +720,7 @@
          不然會被 layoutProducts()/_smartAutoLayout() 的結果蓋掉。
          陰影重繪排在最後(70ms)，確保商品位置已經定案。*/
       setTimeout(_smartAutoLayout, 30);
-      setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+      setTimeout(_applyManualPositionsAndRedraw, 60);
       setTimeout(_bnRedrawShadowScene, 70);
     }
 
@@ -889,7 +889,7 @@
       if(!remaining.length) { pzone.style.background=''; pzone.style.opacity=''; }
       else {
         setTimeout(_smartAutoLayout, 30);
-        setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+        setTimeout(_applyManualPositionsAndRedraw, 60);
       }
       _bnRedrawShadowScene();
     }
@@ -1493,6 +1493,17 @@
      其餘商品完全不動，維持 layoutProducts()/_smartAutoLayout() 的自動排版結果。
      必須用百分比反推目前畫布的實際 px，因為不同版位（720x720、IG、FB_POST……）
      的畫布尺寸不同，直接套用別的畫布量出來的 px 會整個跑掉。*/
+  /* ★ 補套手動位置 + 重畫陰影(單一權威,給所有「延遲 60ms」的呼叫端共用)。
+     這條路徑一律是 setTimeout(...,60) 執行的,而呼叫端當下那次
+     _bnRedrawShadowScene() 早在下一個 rAF(~16ms)就畫完了 —— 等到這裡把商品
+     搬到最終位置時,已經沒有任何人會再畫一次 → 舊位置的陰影原地留下變殘影。
+     (切換公版/SBD、刪商品後最明顯;而且只有「手動移動過」的商品會被這裡搬動,
+      所以症狀看起來像是「多選移動過才會殘影」。) */
+  function _applyManualPositionsAndRedraw() {
+    applyManualProductPositions(getProdZone());
+    _bnRedrawShadowScene();
+  }
+
   function applyManualProductPositions(prodZone) {
     if (!prodZone) return;
     function _applyPct(zone, selector){
@@ -1791,7 +1802,11 @@
       var canvasEl = getCanvasEl();
       if (!canvasEl) return;
       var canvasRect = canvasEl.getBoundingClientRect();
-      var boxes = Array.prototype.slice.call(queryAllProdBox());
+      /* ★ 排除被構圖藏起來的商品(display:none):它的 rect 全為 0,
+         留著只是白畫一輪,也讓「2品切1品」時的除錯訊息失真。 */
+      var boxes = Array.prototype.slice.call(queryAllProdBox()).filter(function(b){
+        return b.style.display !== 'none';
+      });
       /* 依目前 z-index 由小到大排序 = 由後到前，符合 renderScene() 的疊放順序約定 */
       boxes.sort(function(a, b){
         return (parseInt(a.style.zIndex, 10) || 0) - (parseInt(b.style.zIndex, 10) || 0);
@@ -1809,7 +1824,27 @@
           shadowScaleY: parseFloat(box.dataset.shadowScaleY) || 1
         };
       });
+      /* ★ SBD:商品掛在有 overflow:hidden 的白框(.bn-kv-frame)裡,超出的部分會被
+         裁掉;但陰影畫在「整張畫布」這一層獨立 canvas 上,完全不受那個 overflow
+         管轄 → 商品一超出白框,它的陰影就漏到框外(回報問題)。這裡在「畫的當下」
+         用 ctx.clip() 裁成同一個矩形,商品被裁到哪、陰影就跟到哪。
+         ★ 不能改用 CSS clip-path / overflow 把這層塞進白框:html2canvas 1.4.1
+         不支援 clip-path,會變成「預覽正常、匯出漏出」;canvas 內的 clip 是
+         已經光柵化的像素,匯出天然一致。 */
+      var frame = _isSbdMode() ? canvasEl.querySelector('.bn-kv-frame') : null;
+      var clipped = false;
+      if (frame && frame.style.display !== 'none') {
+        var fr = frame.getBoundingClientRect();
+        if (fr.width && fr.height) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(fr.left - canvasRect.left, fr.top - canvasRect.top, fr.width, fr.height);
+          ctx.clip();
+          clipped = true;
+        }
+      }
       window.ShadowPlugin.renderScene(ctx, items);
+      if (clipped) ctx.restore();
     });
   }
   window._bnRedrawShadowScene = _bnRedrawShadowScene;
@@ -2200,7 +2235,7 @@
 
     layoutProducts(target);
     if (typeof _smartAutoLayout === 'function') _smartAutoLayout();
-    setTimeout(function(){ applyManualProductPositions(getProdZone()); }, 60);
+    setTimeout(_applyManualPositionsAndRedraw, 60);
 
     /* SBD 模式不需要公版的背景幾何陰影（模擬人物站立地面的那塊平行四邊形），
        有 KV 底圖 + 白框裝飾時反而會互相干擾。切到 SBD 隱藏、切回公版還原，
@@ -2355,12 +2390,42 @@
     if (!img) return;
     img.style.transformOrigin = 'center center';
     img.style.transform = 'rotate(' + deg + 'deg) translateZ(0)';
+    _bnRedrawShadowScene();   /* ★ 與 RotatePlugin.applyRot 對齊:轉了就要重畫陰影 */
   }
 
+  /* ══ 跨容器群組:座標系換算(2026-08)══════════════════════════════
+     SBD 模式下 _switchSbdMode() 只把「商品」搬進白框(.bn-kv-frame),
+     「人物」仍留在 .商品範圍 —— 同一組多選的成員會分屬兩個原點不同的
+     容器。而 style.left/top 永遠是相對「各自的容器」,直接拿來一起算
+     外框、或把 A 容器算出的值寫進 B 容器的成員,就會整組錯開;每拖一次
+     重新量一次、再錯一次 → 累積成回報的「隊形散開、越跑越遠」。
+     以下三支把所有群組運算統一收斂到「基準容器(成員[0]的容器)」座標系。*/
+
+  /* 群組的基準容器 = 成員[0] 的容器(錨點框 AT 也是掛在這個容器上) */
+  function _groupBase() {
+    return _multiSel.length ? (_multiSel[0]._dragZone || null) : null;
+  }
+  /* 成員是否跨越多個容器(SBD 人物+商品多選) */
+  function _multiSelMixed() {
+    var base = _groupBase();
+    if (!base) return false;
+    return _multiSel.some(function (b) { return (b._dragZone || base) !== base; });
+  }
+  /* b 的容器原點相對於 base 容器原點的位移;同容器/取不到時為 {0,0}(等同舊行為) */
+  function _zoneOffset(b, base) {
+    var z = b && b._dragZone;
+    if (!z || !base || z === base) return { dx: 0, dy: 0 };
+    var zr = z.getBoundingClientRect(), br = base.getBoundingClientRect();
+    return { dx: zr.left - br.left, dy: zr.top - br.top };
+  }
+
+  /* 回傳「基準容器座標系」下的群組外框 */
   function _groupBBoxStyle() {
     var minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+    var base = _groupBase();
     _multiSel.forEach(function (b) {
-      var l = parseFloat(b.style.left) || 0, t = parseFloat(b.style.top) || 0;
+      var off = _zoneOffset(b, base);
+      var l = (parseFloat(b.style.left) || 0) + off.dx, t = (parseFloat(b.style.top) || 0) + off.dy;
       var w = parseFloat(b.style.width) || 0, h = parseFloat(b.style.height) || 0;
       if (l < minL) minL = l; if (t < minT) minT = t;
       if (l + w > maxR) maxR = l + w; if (t + h > maxB) maxB = t + h;
@@ -2386,11 +2451,14 @@
        · 群組一律夾「外框」而非逐一夾成員 —— 逐一夾會壓扁隊形 */
 
   /* 取得夾限基準框(zone 座標系)。回傳 null = 取不到畫布,呼叫端退回 zone 尺寸 */
-  function _canvasBoundsOf(zone) {
+  /* ★ ignoreFrame:群組成員跨容器時(SBD 人物+商品多選)強制用整張畫布當基準。
+     否則基準容器是白框 → 連「根本不在白框裡的人物」也被關進白框,
+     整組被往框內擠壓、隊形變形。 */
+  function _canvasBoundsOf(zone, ignoreFrame) {
     var cv = document.getElementById('canvas');
     if (!cv || !zone) return null;
     /* SBD 白框有 overflow 裁切,拖出白框會「隱形弄丟」→ 該模式退回白框自身邊界 */
-    if (zone.classList && zone.classList.contains('bn-kv-frame')) return null;
+    if (!ignoreFrame && zone.classList && zone.classList.contains('bn-kv-frame')) return null;
     var cr = cv.getBoundingClientRect(), zr = zone.getBoundingClientRect();
     return { minX: cr.left - zr.left, minY: cr.top - zr.top,
              maxX: cr.right - zr.left, maxY: cr.bottom - zr.top };
@@ -2425,7 +2493,7 @@
   function _clampGroupIntoZone(zw, zh) {
     if (!_multiSel.length) return;
     var zone = _multiSel[0]._dragZone;
-    var bounds = _canvasBoundsOf(zone) ||
+    var bounds = _canvasBoundsOf(zone, _multiSelMixed()) ||
                  { minX: 0, minY: 0, maxX: zw, maxY: (zh || Infinity) };
     var d = _clampDelta(_groupBBoxStyle(), bounds);
     if (d.dx || d.dy) _multiSel.forEach(function (b) {
@@ -2460,9 +2528,13 @@
     return {
       onStart: function () {
         var zr = zone.getBoundingClientRect();
+        /* ★ l/t 一律換算成「基準容器座標系」(見 _zoneOffset);ox/oy 留著,
+           寫回 style.left/top 時再扣掉,還原成該成員自己容器的座標。 */
+        var base = _groupBase();
         _gStart = { zw: zr.width, zh: zr.height, members: _multiSel.map(function (b) {
-          return { b: b,
-            l: parseFloat(b.style.left) || 0, t: parseFloat(b.style.top) || 0,
+          var off = _zoneOffset(b, base);
+          return { b: b, ox: off.dx, oy: off.dy,
+            l: (parseFloat(b.style.left) || 0) + off.dx, t: (parseFloat(b.style.top) || 0) + off.dy,
             w: parseFloat(b.style.width) || 0, h: parseFloat(b.style.height) || 0,
             rot: parseFloat(b.dataset.rot) || 0 };
         }) };
@@ -2474,11 +2546,15 @@
         _gStart.members.forEach(function (m) {
           m.b.style.width  = (m.w * factor) + 'px';
           m.b.style.height = (m.h * factor) + 'px';
-          m.b.style.left = (ax + (m.l - ax) * factor) + 'px';
-          m.b.style.top  = (ay + (m.t - ay) * factor) + 'px';
+          m.b.style.left = (ax + (m.l - ax) * factor - m.ox) + 'px';
+          m.b.style.top  = (ay + (m.t - ay) * factor - m.oy) + 'px';
         });
         _clampGroupIntoZone(_gStart.zw, _gStart.zh);
         if (_curAT) _curAT.reposition(_groupBBoxStyle());
+        /* ★ 群組縮放改了商品的尺寸與位置,陰影必須重畫;群組旋轉那條走
+           _applyRot→RotatePlugin.applyRot,裡面已經重繪過(rotate-plugin.js:53),
+           只有縮放這條漏了 → 舊尺寸的陰影會留在畫面上。 */
+        _bnRedrawShadowScene();
       },
       onRotate: function (deg) {                      /* 繞群組中心公轉 + 各自自轉(dataset.rot) */
         if (!_gStart || !_gCenter) return;
@@ -2487,8 +2563,8 @@
           var dx = (m.l + m.w / 2) - _gCenter.x, dy = (m.t + m.h / 2) - _gCenter.y;
           var ncx = _gCenter.x + dx * cos - dy * sin;
           var ncy = _gCenter.y + dx * sin + dy * cos;
-          m.b.style.left = (ncx - m.w / 2) + 'px';
-          m.b.style.top  = (ncy - m.h / 2) + 'px';
+          m.b.style.left = (ncx - m.w / 2 - m.ox) + 'px';
+          m.b.style.top  = (ncy - m.h / 2 - m.oy) + 'px';
           /* ★ 只轉內層 img(委派 rotate-plugin),外層 box 保持軸對齊 —— 見 _applyRot 上方說明。
              角度收斂到 (-180,180],與單選旋轉把手一致;deg 是「相對起始的累積角度」,
              每一幀都以 m.rot 為基準重算,所以 normalize 不會造成飄移。 */
@@ -2504,6 +2580,7 @@
         });
         _gStart = null; _gCenter = null;
         if (_curAT) _curAT.reposition(_groupBBoxStyle());
+        _bnRedrawShadowScene();   /* ★ 收尾保險:夾限補償可能又動過位置 */
       }
     };
   }
@@ -2609,9 +2686,16 @@
       /* ★ 已多選且點的是成員之一 → 群組平移(保留選取,記各成員起始) */
       if(_multiSel.length>1 && _multiSel.indexOf(box)!==-1){
         e.stopPropagation();
-        drag={type:'group-move',sx:e.clientX,sy:e.clientY,zw:zr.width,zh:zr.height,cb:_canvasBounds(curZone),
-          members:_multiSel.map(function(b){ var r=b.getBoundingClientRect();
-            return {b:b,l:r.left-zr.left,t:r.top-zr.top,w:r.width,h:r.height}; })};
+        /* ★ 跨容器多選(SBD:商品在白框、人物在商品範圍):l/t 必須相對「成員自己的容器」,
+           因為寫回的 style.left 就是相對自己的容器;另存 ox/oy(自己容器原點相對 curZone)
+           供外框計算換算到同一個座標系。舊版一律用 curZone 量 → 人物與商品各差一個
+           白框原點,一拖就整組錯開、且每次重量再錯一次 → 越跑越遠。 */
+        drag={type:'group-move',sx:e.clientX,sy:e.clientY,zw:zr.width,zh:zr.height,
+          cb:_canvasBoundsOf(curZone,_multiSelMixed()),
+          members:_multiSel.map(function(b){
+            var mz=b._dragZone||curZone, mzr=(mz===curZone?zr:mz.getBoundingClientRect()), r=b.getBoundingClientRect();
+            return {b:b,l:r.left-mzr.left,t:r.top-mzr.top,w:r.width,h:r.height,
+                    ox:mzr.left-zr.left,oy:mzr.top-zr.top}; })};
         box.setPointerCapture(e.pointerId); return;
       }
       /* 否則:清多選、走既有單選(零回歸) */
@@ -2669,9 +2753,11 @@
             整組往上彈且無法往下移,就是回報的「多選後卡在範圍內」。 */
       if(drag.type==='group-move'){
         var gdx=e.clientX-drag.sx, gdy=e.clientY-drag.sy;
+        /* ★ 外框一律在 curZone 座標系算(m.l/m.t 是各自容器的,要先加回 ox/oy) */
         var minL=Infinity,minT=Infinity,maxR=-Infinity,maxB=-Infinity;
-        drag.members.forEach(function(m){ if(m.l<minL)minL=m.l; if(m.t<minT)minT=m.t;
-          if(m.l+m.w>maxR)maxR=m.l+m.w; if(m.t+m.h>maxB)maxB=m.t+m.h; });
+        drag.members.forEach(function(m){ var ml=m.l+m.ox, mt=m.t+m.oy;
+          if(ml<minL)minL=ml; if(mt<minT)minT=mt;
+          if(ml+m.w>maxR)maxR=ml+m.w; if(mt+m.h>maxB)maxB=mt+m.h; });
         var gb = drag.cb || {minX:0,minY:0,maxX:drag.zw,maxY:drag.zh};
         /* 先套用滑鼠位移,再把「位移後的外框」夾回基準框,取得補償量 */
         var moved = { x:minL+gdx, y:minT+gdy, w:maxR-minL, h:maxB-minT };
@@ -2698,7 +2784,7 @@
       /* ★ 群組平移結束:各成員標記 userMoved + 各自持久化回報;保留多選框(持久選取) */
       if(drag && drag.type==='group-move'){
         drag.members.forEach(function(m){ m.b.dataset.userMoved='1'; m.b.dataset.coeditApplied='0'; /* ★#3 手動群組平移→重新受保護 */ _reportBoxLayout(m.b); });
-        drag=null; _updateGroupAnchor(); return;   /* ★ 平移後重定位錨點框 */
+        drag=null; _updateGroupAnchor(); _bnRedrawShadowScene(); return;   /* ★ 平移後重定位錨點框 */
       }
       if(drag) {
         box.dataset.userMoved='1'; /* 有拖移/縮放 → 記錄手動定位 */
@@ -3309,6 +3395,7 @@ function _applyCompose(rawPreset) {
          ★ SBD 模式下改用 getProdZone()（白框），避免 legacy 排列
            算成整個商品範圍的尺寸，導致商品跑出框外 */
       layoutProducts(getProdZone());
+      _bnRedrawShadowScene();   /* ★ 位置變了就要重畫陰影(_applyCompose 那條分支自己已經有) */
     }
   }
 

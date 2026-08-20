@@ -113,7 +113,12 @@ window.ShadowPlugin = (function () {
 
   function removeProduct(id) { delete products[id]; }
 
-  function stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, spread, totalAlpha, samples) {
+  /* rotRad：商品自轉角度(弧度)。畫面上旋轉的是商品的 <img>(transform-origin:center
+     center，見 rotate-plugin.js)，外層 box 維持軸對齊，所以 state.w/h 不會跟著變 ——
+     陰影必須自己把這個旋轉補回去，否則轉了商品、影子還是原來的形狀(回報問題)。
+     順序：先自轉(商品在直立空間裡轉)，再套 shear/squash 的貼地投影 —— canvas 的
+     transform 是後套用的先作用於圖元，所以 rotate 要寫在 transform(投影) 之後。 */
+  function stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, spread, totalAlpha, samples, rotRad) {
     if (!tinted) return;
     targetCtx.save();
     targetCtx.globalCompositeOperation = 'multiply';
@@ -126,6 +131,12 @@ window.ShadowPlugin = (function () {
       targetCtx.save();
       targetCtx.translate(ox + dx, oy + dy);
       targetCtx.transform(1, 0, shear, squash, 0, 0);
+      /* 錨點在「底部中心」→ 商品自己的中心在 (0, -ph/2)，繞它轉才跟畫面一致 */
+      if (rotRad) {
+        targetCtx.translate(0, -ph / 2);
+        targetCtx.rotate(rotRad);
+        targetCtx.translate(0, ph / 2);
+      }
       targetCtx.drawImage(tinted, -pw / 2, -ph, pw, ph);
       targetCtx.restore();
     }
@@ -175,9 +186,18 @@ window.ShadowPlugin = (function () {
     // 光源「中」(angle=0)：只留接地補強陰影，不疊主斜切陰影(直直往下的模糊陰影疊加反而厚重)
     if (opts.presetName === 'top') return;
 
-    var halfW = spw / 2 + Math.abs(shear) * sph + maxSpread * 2 + 20;
+    /* ★ 旋轉後的外接矩形會變大，暫存畫布要跟著放大，否則影子的邊角會被裁掉 */
+    var rotRad = rot * Math.PI / 180;
+    var rw = spw, rh = sph;
+    if (rot) {
+      var ac = Math.abs(Math.cos(rotRad)), as = Math.abs(Math.sin(rotRad));
+      rw = spw * ac + sph * as;
+      rh = spw * as + sph * ac;
+    }
+    var extH = Math.max(sph, rh);
+    var halfW = rw / 2 + Math.abs(shear) * extH + maxSpread * 2 + 20;
     var tempW = Math.ceil(halfW * 2);
-    var tempH = Math.ceil(sph * squash * 2 + maxSpread * 2 + 40);
+    var tempH = Math.ceil(extH * squash * 2 + maxSpread * 2 + 40);
     var anchorX = halfW;
     var anchorY = Math.ceil(tempH * 0.5);
 
@@ -185,9 +205,9 @@ window.ShadowPlugin = (function () {
     tmp.width = tempW; tmp.height = tempH;
     var tctx = tmp.getContext('2d');
 
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 1.8, 0.2, 12);
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.8, 0.28, 10);
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.25, 0.25, 6);
+    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 1.8, 0.2, 12, rotRad);
+    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.8, 0.28, 10, rotRad);
+    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.25, 0.25, 6, rotRad);
 
     if (occludeStrength > 0 && occluderMask) {
       tctx.save();
@@ -232,7 +252,17 @@ window.ShadowPlugin = (function () {
       if (p && p.silhouette) {
         var pad = p.trim ? p.trim.bottom * state.h : 0;
         var py = state.y + pad;
-        rmctx.drawImage(p.silhouette, state.x - state.w / 2, py - state.h, state.w, state.h);
+        /* ★ 遮擋遮罩也要跟著商品自轉，否則旋轉後會在「舊的方向」把後方商品的影子挖掉 */
+        var r = (state.rot || 0) * Math.PI / 180;
+        if (r) {
+          rmctx.save();
+          rmctx.translate(state.x, py - state.h / 2);   /* 商品中心 */
+          rmctx.rotate(r);
+          rmctx.drawImage(p.silhouette, -state.w / 2, -state.h / 2, state.w, state.h);
+          rmctx.restore();
+        } else {
+          rmctx.drawImage(p.silhouette, state.x - state.w / 2, py - state.h, state.w, state.h);
+        }
       }
     });
   }
