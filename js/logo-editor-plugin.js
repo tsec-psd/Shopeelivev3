@@ -1,9 +1,16 @@
 /*!
- * Logo 裁切 Modal v14（CropperJS）
+ * Logo 編輯器 Modal v14
+ *   ─ openCropEditor：CropperJS 裁切
+ *   ─ openColorPicker：從 LOGO 像素吸色（給「底框顏色」用）
  *
  * 使用：
  *   window.BNLogoMenu.openCropEditor(src, onDone)
  *     → 開啟裁切視窗，完成後呼叫 onDone(newSrc)；取消則不呼叫。
+ *
+ *   window.BNLogoMenu.openColorPicker(items, opts)
+ *     items = [{label, src}]（傳基底，不是底色合成品）
+ *     opts  = { color:目前顏色, onPick(hex) }
+ *     → 點 LOGO 上任一不透明像素即取該色；也可點自動算出的主色。
  *
  * ★ 呼叫端請把「基底」(bn-editor-plugin.js 的 lg._origSrc)傳進來，
  *   不要傳側欄縮圖上那張 —— 白底開著時縮圖是白底合成品，裁它會把
@@ -411,9 +418,260 @@
     });
   }
 
+  /* ══ 吸色 Modal ══════════════════════════════════════════════════
+     用途:讓「底框顏色」可以直接吃 LOGO 自己的顏色(廠商品牌色),
+     不必先回 PS 對色再手打色碼。
+
+     ★ 呼叫端要傳「基底」的 src —— 底色開著時成品最外圈就是底框本身,
+       吸到的會是上一次選的顏色而不是 LOGO 的顏色(bn-editor-plugin.js
+       的 openColorPicker 呼叫處已經傳 _bnLogoBase(lg))。
+     ★ 透明像素一律不可取:alpha 幾乎為 0 的地方沒有顏色可言,
+       硬取會拿到「和棋盤格底混出來」的假色。棋盤格是用 CSS 畫在
+       canvas 背後的,不畫進像素,才能靠 alpha 判斷透明。
+     ★ Modal 每次開啟重建、關閉即移除 —— 內容(幾張 LOGO、主色)每次都不同,
+       常駐 DOM 只會留下過期的 canvas 與監聽器。
+     ────────────────────────────────────────────────────────────────── */
+
+  function injectColorCSS(){
+    if(document.getElementById('_bn_lm_color_css')) return;
+    var st = document.createElement('style');
+    st.id = '_bn_lm_color_css';
+    st.textContent =
+      '.bn-cp-wrap{\n' +
+      '  position:fixed !important; inset:0 !important; z-index:2147483646 !important;\n' +
+      '  background:rgba(0,0,0,.55) !important; display:flex !important;\n' +
+      '  align-items:center !important; justify-content:center !important;\n' +
+      '}\n' +
+      '.bn-cp-panel{\n' +
+      '  background:#1e1e1e; color:#fff; border:1px solid #333; border-radius:14px;\n' +
+      '  width:min(460px,94vw); max-height:88vh; overflow:auto;\n' +
+      '  box-shadow:0 24px 70px rgba(0,0,0,.6);\n' +
+      '}\n' +
+      '.bn-cp-panel header{\n' +
+      '  display:flex; align-items:center; justify-content:space-between;\n' +
+      '  padding:12px 14px; border-bottom:1px solid #333; font-size:14px;\n' +
+      '}\n' +
+      '.bn-cp-panel header button{\n' +
+      '  background:transparent; border:1px solid #444; color:#aaa;\n' +
+      '  border-radius:6px; font-size:12px; padding:3px 10px; cursor:pointer;\n' +
+      '}\n' +
+      '.bn-cp-body{ padding:12px 14px; display:flex; flex-direction:column; gap:10px; }\n' +
+      '.bn-cp-hint{ font-size:11px; color:#8b93a1; }\n' +
+      /* 棋盤格:讓透明區域看得出來(只在背後,不進像素) */
+      '.bn-cp-canvas{\n' +
+      '  display:block; max-width:100%; cursor:crosshair; border-radius:8px;\n' +
+      '  border:1px solid #333;\n' +
+      '  background-color:#fff;\n' +
+      '  background-image:linear-gradient(45deg,#e2e2e2 25%,transparent 25%,transparent 75%,#e2e2e2 75%),\n' +
+      '                   linear-gradient(45deg,#e2e2e2 25%,transparent 25%,transparent 75%,#e2e2e2 75%);\n' +
+      '  background-size:16px 16px; background-position:0 0,8px 8px;\n' +
+      '}\n' +
+      '.bn-cp-label{ font-size:11px; color:#8b93a1; margin-bottom:3px; }\n' +
+      '.bn-cp-swatches{ display:flex; gap:6px; flex-wrap:wrap; }\n' +
+      '.bn-cp-swatch{\n' +
+      '  width:26px; height:26px; border-radius:6px; border:1px solid #444;\n' +
+      '  cursor:pointer; padding:0;\n' +
+      '}\n' +
+      '.bn-cp-swatch:hover{ outline:2px solid #ee4d2d; outline-offset:1px; }\n' +
+      '.bn-cp-foot{\n' +
+      '  display:flex; align-items:center; gap:10px;\n' +
+      '  padding:10px 14px; border-top:1px solid #333;\n' +
+      '}\n' +
+      '.bn-cp-prev{ width:30px; height:30px; border-radius:6px; border:1px solid #444; flex-shrink:0; }\n' +
+      '.bn-cp-hexv{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }\n' +
+      '.bn-cp-foot .bn-cp-spacer{ flex:1; }\n' +
+      '.bn-cp-btn{\n' +
+      '  background:transparent; border:1px solid #444; color:#ccc;\n' +
+      '  border-radius:7px; font-size:12px; padding:5px 12px; cursor:pointer;\n' +
+      '}\n' +
+      '.bn-cp-btn:hover{ background:#2b2b2b; }\n';
+    document.head.appendChild(st);
+  }
+
+  function _hex2(v){
+    var h = Math.max(0, Math.min(255, v|0)).toString(16);
+    return h.length < 2 ? '0'+h : h;
+  }
+  function _toHex(r,g,b){ return ('#'+_hex2(r)+_hex2(g)+_hex2(b)).toUpperCase(); }
+
+  /* 自動主色:量化到 4 bit/通道後計數,再把太相近的合併。
+     只算不透明像素;縮到 160px 掃是為了避免大圖逐像素跑太久。 */
+  function dominantColors(img, maxOut){
+    var S = 160;
+    var sc = Math.min(1, S / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    var w = Math.max(1, Math.round((img.naturalWidth  || 1) * sc));
+    var h = Math.max(1, Math.round((img.naturalHeight || 1) * sc));
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var cx = c.getContext('2d', { willReadFrequently:true });
+    cx.drawImage(img, 0, 0, w, h);
+    var d;
+    try { d = cx.getImageData(0, 0, w, h).data; } catch(_) { return []; }
+
+    var bucket = {};
+    for(var i = 0; i < d.length; i += 4){
+      if(d[i+3] < 200) continue;                     /* 半透明/透明不列入 */
+      var key = ((d[i] >> 4) << 8) | ((d[i+1] >> 4) << 4) | (d[i+2] >> 4);
+      var b = bucket[key] || (bucket[key] = { n:0, r:0, g:0, b:0 });
+      b.n++; b.r += d[i]; b.g += d[i+1]; b.b += d[i+2];
+    }
+    var list = Object.keys(bucket).map(function(k){
+      var b = bucket[k];
+      return { n:b.n, r:Math.round(b.r/b.n), g:Math.round(b.g/b.n), b:Math.round(b.b/b.n) };
+    }).sort(function(x,y){ return y.n - x.n; });
+
+    /* 貪婪去重:與已選色差距太小的就跳過,免得六格全是同一個色階 */
+    var out = [];
+    for(var j = 0; j < list.length && out.length < (maxOut || 6); j++){
+      var cand = list[j], near = false;
+      for(var k2 = 0; k2 < out.length; k2++){
+        var o = out[k2];
+        if(Math.abs(o.r-cand.r) + Math.abs(o.g-cand.g) + Math.abs(o.b-cand.b) < 60){ near = true; break; }
+      }
+      if(!near) out.push(cand);
+    }
+    return out.map(function(o){ return _toHex(o.r, o.g, o.b); });
+  }
+
+  function openColorPicker(items, opts){
+    injectColorCSS();
+    items = items || [];
+    opts  = opts  || {};
+
+    /* 舊的先收掉,避免連點開兩層 */
+    var old = document.getElementById('bnLogoColorModal');
+    if(old) old.remove();
+
+    var wrap = document.createElement('div');
+    wrap.id = 'bnLogoColorModal';
+    wrap.className = 'bn-cp-wrap';
+    wrap.innerHTML =
+      '<div class="bn-cp-panel">' +
+        '<header><strong>吸取 LOGO 顏色</strong>' +
+          '<button type="button" data-cp="close">關閉</button></header>' +
+        '<div class="bn-cp-body">' +
+          '<div class="bn-cp-hint">在 LOGO 上點一下即取該點顏色（棋盤格＝透明處，取不到色）</div>' +
+          '<div data-cp="imgs" style="display:flex;flex-direction:column;gap:10px;"></div>' +
+          '<div><div class="bn-cp-label">自動主色</div>' +
+            '<div class="bn-cp-swatches" data-cp="swatches"></div></div>' +
+        '</div>' +
+        '<div class="bn-cp-foot">' +
+          '<div class="bn-cp-prev" data-cp="prev"></div>' +
+          '<span class="bn-cp-hexv" data-cp="hex">—</span>' +
+          '<span class="bn-cp-spacer"></span>' +
+          '<button type="button" class="bn-cp-btn" data-cp="screen" hidden>螢幕吸色</button>' +
+          '<button type="button" class="bn-cp-btn" data-cp="cancel">取消</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(wrap);
+
+    var q1 = function(sel){ return wrap.querySelector('[data-cp="'+sel+'"]'); };
+    var prevEl = q1('prev'), hexEl = q1('hex');
+
+    function preview(hex){
+      prevEl.style.background = hex || 'transparent';
+      hexEl.textContent = hex || '（透明處）';
+    }
+    preview(opts.color || null);
+
+    function close(){
+      document.removeEventListener('keydown', onKey);
+      wrap.remove();
+    }
+    function commit(hex){
+      close();
+      if(typeof opts.onPick === 'function') opts.onPick(hex);
+    }
+    function onKey(e){ if(e.key === 'Escape'){ e.stopPropagation(); close(); } }
+    document.addEventListener('keydown', onKey);
+
+    q1('close').addEventListener('click', close);
+    q1('cancel').addEventListener('click', close);
+    wrap.addEventListener('click', function(e){ if(e.target === wrap) close(); });
+
+    /* 每張 LOGO 一個 canvas。畫的是原圖像素(不含棋盤格),
+       所以 alpha 判得準;顯示大小另外用 CSS 縮。 */
+    var imgsEl = q1('imgs');
+    var swEl   = q1('swatches');
+
+    function sampleAt(cv, e){
+      var r = cv.getBoundingClientRect();
+      if(!r.width || !r.height) return null;
+      var x = Math.floor((e.clientX - r.left) * (cv.width  / r.width));
+      var y = Math.floor((e.clientY - r.top ) * (cv.height / r.height));
+      if(x < 0 || y < 0 || x >= cv.width || y >= cv.height) return null;
+      var d;
+      try { d = cv.getContext('2d', { willReadFrequently:true }).getImageData(x, y, 1, 1).data; }
+      catch(_) { return null; }
+      if(d[3] < 10) return null;          /* 透明處沒有顏色 */
+      return _toHex(d[0], d[1], d[2]);
+    }
+
+    items.forEach(function(it, idx){
+      if(!it || !it.src) return;
+      var box = document.createElement('div');
+      if(items.length > 1){
+        var lb = document.createElement('div');
+        lb.className = 'bn-cp-label';
+        lb.textContent = it.label || ('Logo ' + (idx+1));
+        box.appendChild(lb);
+      }
+      var cv = document.createElement('canvas');
+      cv.className = 'bn-cp-canvas';
+      box.appendChild(cv);
+      imgsEl.appendChild(box);
+
+      var img = new Image();
+      img.onload = function(){
+        /* canvas 內部解析度就用原圖(上限 800,上傳時已限過),
+           畫面尺寸交給 CSS max-width + height:auto */
+        cv.width  = img.naturalWidth  || 1;
+        cv.height = img.naturalHeight || 1;
+        cv.style.height = 'auto';
+        cv.getContext('2d', { willReadFrequently:true }).drawImage(img, 0, 0);
+
+        /* 主色:多張 LOGO 就都列出來,順序照 LOGO 順序 */
+        dominantColors(img, 6).forEach(function(hex){
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'bn-cp-swatch';
+          b.style.background = hex;
+          b.title = hex;
+          b.addEventListener('mouseover', function(){ preview(hex); });
+          b.addEventListener('click', function(){ commit(hex); });
+          swEl.appendChild(b);
+        });
+      };
+      img.src = it.src;
+
+      cv.addEventListener('mousemove', function(e){ preview(sampleAt(cv, e)); });
+      cv.addEventListener('mouseleave', function(){ preview(opts.color || null); });
+      cv.addEventListener('click', function(e){
+        var hex = sampleAt(cv, e);
+        if(hex) commit(hex);            /* 點到透明處就當沒點 */
+      });
+    });
+
+    /* 螢幕吸色(Chrome/Edge 有 EyeDropper):可以吸預覽區、KV 底圖等畫面上任何顏色。
+       開啟前要把 Modal 藏起來 —— 不然滿版遮罩會擋住要吸的東西。 */
+    if(global.EyeDropper){
+      var scr = q1('screen');
+      scr.hidden = false;
+      scr.addEventListener('click', function(){
+        wrap.style.visibility = 'hidden';
+        new global.EyeDropper().open().then(function(res){
+          if(res && res.sRGBHex) commit(res.sRGBHex.toUpperCase());
+          else wrap.style.visibility = '';
+        }).catch(function(){
+          wrap.style.visibility = '';   /* 使用者取消 */
+        });
+      });
+    }
+  }
+
   /* ── 公開 API ── */
   global.BNLogoMenu = {
-    openCropEditor: openCropEditor
+    openCropEditor: openCropEditor,
+    openColorPicker: openColorPicker
   };
 
 }(window));

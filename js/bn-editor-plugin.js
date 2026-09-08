@@ -180,9 +180,20 @@
     var LOGO_ROUND_CSS = '10px';
 
     function _bnLogoBase(lg){ return (lg && (lg._origSrc || lg.src)) || ''; }
+
+    /* 底框顏色(白底那層的填色)。預設白色 —— 沒設定過的檔案/舊快照
+       行為與過去完全相同。只接受 #RGB / #RRGGBB,其餘一律退回白色,
+       免得壞值直接進 canvas 的 fillStyle(那會靜靜地畫成黑色)。 */
+    function _bnLogoBgColorGet(){
+      var c = window._bnLogoBgColor;
+      if(typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim())){
+        return c.trim().toUpperCase();
+      }
+      return '#FFFFFF';
+    }
     function _bnLogoIsCropped(lg){ return !!(lg && lg.srcRaw); }
-    /* 有白底時不套 CSS 圓角:白底合成出來的白框本身就是圓角矩形,
-       再疊一層只會把白框四角切掉。lo.round 的值保留,關掉白底就恢復。 */
+    /* 有底色時不套 CSS 圓角:合成出來的底框本身就是圓角矩形,
+       再疊一層只會把底框四角切掉。lo.round 的值保留,關掉底色就恢復。 */
     function _bnLogoRoundOn(lg){ return !!(lg && lg.round) && !window._bnLogoWhiteBg; }
 
     function _bnMakeLogo(id, src){
@@ -271,8 +282,9 @@
         c.width = cw; c.height = ch;
         var ctx = c.getContext('2d');
 
-        /* 白色圓角矩形鋪滿整個畫布(不再內縮) */
-        ctx.fillStyle = '#FFFFFF';
+        /* 圓角矩形鋪滿整個畫布(不再內縮)。顏色可調(側欄「底框顏色」),
+           預設白色 —— 這一層是烤進 PNG 的,所以換色要重新合成一次。 */
+        ctx.fillStyle = _bnLogoBgColorGet();
         ctx.beginPath();
         ctx.moveTo(r, 0);
         ctx.lineTo(cw - r, 0);
@@ -361,6 +373,7 @@
       var target=null;
       scroll.querySelectorAll('.s-section').forEach(function(el){if(el.textContent.trim()==='排版選擇')target=el;});
       window._bnLogoWhiteBg = window._bnLogoWhiteBg || false;
+      window._bnLogoBgColor = _bnLogoBgColorGet();
 
       var sec=document.createElement('div');
       sec.innerHTML=[
@@ -370,7 +383,7 @@
         '    <input type="file" accept="image/*" multiple id="bn-logo-inp">',
         '    ＋ 點擊或拖曳上傳 Logo',
         '  </div>',
-        /* 白底 toggle */
+        /* 底色 toggle（開關本身沿用 whitebg 的 id / 全域變數名）*/
         '  <label id="bn-logo-whitebg-wrap" style="display:flex;align-items:center;gap:7px;',
         '         padding:6px 0 2px;cursor:pointer;font-size:11px;color:var(--text2);">',
         '    <div id="bn-logo-whitebg-toggle" style="',
@@ -382,16 +395,26 @@
         '           background:var(--text3);top:2px;left:2px;',
         '           transition:transform .2s,background .2s;"></div>',
         '    </div>',
-        '    Logo 加白底',
+        '    Logo 加底色',
         '  </label>',
         /* ★ 規格 3.1:白框留白可調（回報「logo 無法拉大白框至合適大小」）
            ★ 同批做過的「廠商 LOGO 尺寸」滑桿已移除 —— 放大會撐寬 .廠商LOGO範圍,
              而 .LOGO範圍 是 justify-content:center,整排會重新置中,
              連帶把蝦導播 LOGO 推離設計的左側對齊線。要重做必須先解決這點。 */
         '  <div id="bn-logo-pad-row" style="display:flex;align-items:center;gap:8px;padding:4px 0 4px;font-size:11px;color:var(--text2);">',
-        '    <span style="flex-shrink:0;">白框留白</span>',
+        '    <span style="flex-shrink:0;">底框粗細</span>',
         '    <input type="range" id="bn-logo-pad" min="0" max="40" step="1" value="10" style="flex:1;min-width:0;">',
         '    <span id="bn-logo-pad-val" style="flex-shrink:0;width:30px;text-align:right;">10%</span>',
+        '  </div>',
+        /* 底框顏色:預設白色。「吸色」從 LOGO 自己的像素取色(見 logo-editor-plugin.js
+           的 openColorPicker),讓底框可以直接吃廠商的品牌色而不必回 PS 對色。 */
+        '  <div id="bn-logo-bg-row" style="display:flex;align-items:center;gap:6px;padding:0 0 6px;font-size:11px;color:var(--text2);">',
+        '    <span style="flex-shrink:0;">底框顏色</span>',
+        '    <input type="color" id="bn-logo-bgcolor" value="#FFFFFF" title="底框顏色" style="width:30px;height:20px;padding:0;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:none;cursor:pointer;flex-shrink:0;">',
+        '    <span id="bn-logo-bgcolor-hex" style="flex-shrink:0;font-family:ui-monospace,Menlo,Consolas,monospace;">#FFFFFF</span>',
+        '    <span style="flex:1;min-width:0;"></span>',
+        '    <button type="button" id="bn-logo-bgcolor-pick" style="flex-shrink:0;padding:2px 7px;font-size:10px;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:transparent;color:var(--text2,#a0a0a0);cursor:pointer;">吸色</button>',
+        '    <button type="button" id="bn-logo-bgcolor-white" title="回復白色" style="flex-shrink:0;padding:2px 6px;font-size:10px;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:transparent;color:var(--text2,#a0a0a0);cursor:pointer;">白</button>',
         '  </div>',
         '  <div class="bn-prod-list" id="bn-logo-list"></div>',
         '</div>',
@@ -405,7 +428,7 @@
         inp.value='';
       });
 
-      /* 白底 toggle 事件 */
+      /* 底色 toggle 事件 */
       var wbToggle = document.getElementById('bn-logo-whitebg-toggle');
       if (wbToggle) {
         syncWhiteBgToggle();
@@ -428,15 +451,36 @@
       var padInp   = document.getElementById('bn-logo-pad');
       var padVal   = document.getElementById('bn-logo-pad-val');
 
+      /* 側欄控制項 ← 全域狀態。還原流程(bn.html)也會呼叫,所以一律從
+         window 上的值重讀,不要依賴 DOM 現值。 */
       window._bnSyncLogoSliders = function(){
         var p = document.getElementById('bn-logo-pad');
         var pv= document.getElementById('bn-logo-pad-val');
         var padPct = Math.round(((typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10) * 100);
         if (p)  p.value  = String(padPct);
         if (pv) pv.textContent = padPct + '%';
-        /* 白底關著時留白沒有作用,淡出提示(仍可調,開啟白底後立即生效) */
+        /* 底色關著時粗細/顏色都沒有作用,淡出提示(仍可調,開啟後立即生效) */
+        var on  = !!window._bnLogoWhiteBg;
         var row = document.getElementById('bn-logo-pad-row');
-        if (row) row.style.opacity = window._bnLogoWhiteBg ? '1' : '.4';
+        if (row) row.style.opacity = on ? '1' : '.4';
+
+        var hex = _bnLogoBgColorGet();
+        var ci  = document.getElementById('bn-logo-bgcolor');
+        var ch  = document.getElementById('bn-logo-bgcolor-hex');
+        var crow= document.getElementById('bn-logo-bg-row');
+        var pick= document.getElementById('bn-logo-bgcolor-pick');
+        if (ci) ci.value = hex.length === 4                     /* #RGB → #RRGGBB:input[type=color] 只吃 6 位 */
+          ? '#' + hex[1]+hex[1] + hex[2]+hex[2] + hex[3]+hex[3]
+          : hex;
+        if (ch) ch.textContent = hex;
+        if (crow) crow.style.opacity = on ? '1' : '.4';
+        /* 沒有 LOGO 就沒有像素可吸 */
+        if (pick){
+          var has = !!(window._bnLogos && window._bnLogos.length);
+          pick.disabled = !has;
+          pick.style.opacity = has ? '1' : '.4';
+          pick.style.cursor  = has ? 'pointer' : 'default';
+        }
       };
 
       if (padInp) {
@@ -452,6 +496,48 @@
           _bnCommitLogos(true);
         });
       }
+      /* ══ 底框顏色 ═══════════════════════════════════════════════
+         與粗細滑桿同一個道理:底色是烤進 PNG 的,換色必須重新合成,
+         所以拖曳/滑動過程(input)只更新標籤,放開(change)才真的重算。 */
+      var bgInp  = document.getElementById('bn-logo-bgcolor');
+      var bgHex  = document.getElementById('bn-logo-bgcolor-hex');
+      var bgPick = document.getElementById('bn-logo-bgcolor-pick');
+      var bgWhite= document.getElementById('bn-logo-bgcolor-white');
+
+      /* 套用新顏色:沒開底色時只記下設定值(開啟後立即生效) */
+      function applyLogoBgColor(hex){
+        window._bnLogoBgColor = hex;
+        window._bnSyncLogoSliders();
+        if (!window._bnLogoWhiteBg || !window._bnLogos.length) {
+          if (typeof saveHistory === 'function') saveHistory();
+          return;
+        }
+        _bnCommitLogos(true);
+      }
+
+      if (bgInp) {
+        bgInp.addEventListener('input',  function(){ if (bgHex) bgHex.textContent = this.value.toUpperCase(); });
+        bgInp.addEventListener('change', function(){ applyLogoBgColor(this.value.toUpperCase()); });
+      }
+      if (bgWhite) {
+        bgWhite.addEventListener('click', function(){ applyLogoBgColor('#FFFFFF'); });
+      }
+      if (bgPick) {
+        bgPick.addEventListener('click', function(){
+          if (!window._bnLogos || !window._bnLogos.length) return;
+          _bnWithLogoMenu(function(){
+            /* ★ 一律吸「基底」的像素:底色開著時成品外圈是底框本身,
+               吸到的會是上一次選的顏色,而不是 LOGO 自己的顏色。 */
+            window.BNLogoMenu.openColorPicker(
+              _bnNormalizeLogos().map(function(lg, i){
+                return { label:'Logo ' + (i+1), src:_bnLogoBase(lg) };
+              }),
+              { color:_bnLogoBgColorGet(), onPick:applyLogoBgColor }
+            );
+          });
+        });
+      }
+
       window._bnSyncLogoSliders();
       drop.addEventListener('dragover',function(e){e.preventDefault();this.classList.add('drag');});
       drop.addEventListener('dragleave',function(){this.classList.remove('drag');});
@@ -653,8 +739,20 @@
       /* drop 按鈕狀態 */
       var drop=document.getElementById('bn-logo-drop');
       if(drop) drop.style.opacity=window._bnLogos.length>=MAX_LOGOS?'0.4':'1';
+      /* 「吸色」的可用狀態綁在「有沒有 LOGO」上,所以清單一變就要重算 */
+      if(typeof window._bnSyncLogoSliders === 'function') window._bnSyncLogoSliders();
     }
 
+
+    /* logo-editor-plugin.js(裁切 Modal + 吸色 Modal)按需載入。
+       選單與吸色鈕共用這一份載入器,避免各自寫一次注入邏輯。 */
+    function _bnWithLogoMenu(cb){
+      if(window.BNLogoMenu){ cb(); return; }
+      var s=document.createElement('script');
+      s.src='js/logo-editor-plugin.js';
+      s.onload=cb;
+      document.head.appendChild(s);
+    }
 
     /* 工具列「編輯」按鈕的選單 */
     function showLogoMenu(lid, anchorEl){
@@ -688,11 +786,11 @@
         items.push({
           label   : lo.round ? '取消圓角' : '加圓角',
           action  : 'round',
-          /* 有白底時圓角由白框自己提供(白框本來就是圓角矩形),
-             再疊一層 CSS 圓角只會把白框四角切掉 → 停用並說明原因。
-             lo.round 的值仍保留,關掉白底後自動恢復。 */
+          /* 有底色時圓角由底框自己提供(底框本來就是圓角矩形),
+             再疊一層 CSS 圓角只會把底框四角切掉 → 停用並說明原因。
+             lo.round 的值仍保留,關掉底色後自動恢復。 */
           disabled: !!window._bnLogoWhiteBg,
-          hint    : '白底已內含'
+          hint    : '底色已內含'
         });
 
         menu.innerHTML = '';
@@ -726,13 +824,7 @@
         menu.style.top  = (rect.bottom + 4) + 'px';
       }
 
-      if(window.BNLogoMenu){ doShow(); }
-      else {
-        var s=document.createElement('script');
-        s.src='js/logo-editor-plugin.js';
-        s.onload=doShow;
-        document.head.appendChild(s);
-      }
+      _bnWithLogoMenu(doShow);
     }
 
     function handleLogoAction(action, lid){
@@ -756,7 +848,7 @@
         _bnCommitLogos(true);
 
       } else if(action === 'round'){
-        if(window._bnLogoWhiteBg) return;   /* 白底已內含圓角,選單那顆本來就是 disabled */
+        if(window._bnLogoWhiteBg) return;   /* 底色已內含圓角,選單那顆本來就是 disabled */
         lo.round = !lo.round;
         /* 圓角是 CSS 層,沒動到像素 → 不必重新合成,重繪 + 廣播就好 */
         renderLogoList();
