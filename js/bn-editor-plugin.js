@@ -103,14 +103,12 @@
     /* ── 工具 ── */
     function readFile(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(e){res(e.target.result);};r.onerror=rej;r.readAsDataURL(file);}); }
     function loadImg(src){ return new Promise(function(res,rej){var i=new Image();i.onload=function(){res(i);};i.onerror=rej;i.src=src;}); }
-    function sampleCorner(d,w,h){function px(x,y){var i=(y*w+x)*4;return{r:d[i],g:d[i+1],b:d[i+2],a:d[i+3]};}var c=[px(0,0),px(w-1,0),px(0,h-1),px(w-1,h-1)].filter(function(p){return p.a>200;});if(!c.length)return{r:255,g:255,b:255};var r=0,g=0,b=0;c.forEach(function(p){r+=p.r;g+=p.g;b+=p.b;});return{r:r/c.length,g:g/c.length,b:b/c.length};}
-    function autoTrim(img){var max=1200,sc=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));var w=Math.max(1,Math.round(img.naturalWidth*sc)),h=Math.max(1,Math.round(img.naturalHeight*sc));var c=document.createElement('canvas');c.width=w;c.height=h;var ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,w,h);var id=ctx.getImageData(0,0,w,h),d=id.data,bg=sampleCorner(d,w,h);var x0=w,y0=h,x1=-1,y1=-1;for(var y=0;y<h;y++)for(var x=0;x<w;x++){var i=(y*w+x)*4,a=d[i+3];if(a>18&&(a<245||Math.abs(d[i]-bg.r)+Math.abs(d[i+1]-bg.g)+Math.abs(d[i+2]-bg.b)>46)&&!(d[i]>246&&d[i+1]>246&&d[i+2]>246)){if(x<x0)x0=x;if(y<y0)y0=y;if(x>x1)x1=x;if(y>y1)y1=y;}}if(x1<0)return{src:img.src,ratio:img.naturalWidth/img.naturalHeight};var pad=Math.round(Math.max(w,h)*.015);x0=Math.max(0,x0-pad);y0=Math.max(0,y0-pad);x1=Math.min(w-1,x1+pad);y1=Math.min(h-1,y1+pad);var tw=x1-x0+1,th=y1-y0+1;var o=document.createElement('canvas');o.width=tw;o.height=th;o.getContext('2d').drawImage(c,x0,y0,tw,th,0,0,tw,th);return{src:o.toDataURL('image/png'),ratio:tw/th};}
 
     /* ── 廣播 ── */
 
     /* trimAlpha：只掃 alpha 通道，裁掉透明邊距
-       用於人物/商品（背景已去除），不像 autoTrim 排除白色像素，
-       確保白色系商品或穿白衣人物的邊框計算正確。 */
+       僅用於人物/商品（背景已去除）；LOGO 不做任何自動裁切。
+       只看 alpha 不排除白色像素，白色系商品或穿白衣人物的邊框才算得對。 */
     function trimAlpha(img){
       var W=img.naturalWidth,H=img.naturalHeight;
       if(!W||!H)return{src:img.src,ratio:W/H||1};
@@ -658,33 +656,22 @@
     function doLoadLogo(file){
       if(window._bnLogos.length>=MAX_LOGOS)return;
       readFile(file).then(function(src){
-        /* 步驟 1：autoTrim — 裁切透明/白色邊距，讓 LOGO 吻合實際像素範圍
-           原理：掃描畫布像素，找出非透明內容的邊界框，裁掉多餘空白
-           這樣 object-fit:contain 才能讓 LOGO 真正填滿限制框 */
-        loadImg(src).then(function(img){
-          var trimmed = autoTrim(img);
-          /* 步驟 2：限制最大尺寸，避免大圖佔用記憶體 */
-          _resizeIfNeeded(trimmed.src, 800, function(finalSrc) {
-            var id = 'logo_' + Date.now();
-            /* 原始圖（未加白底）永遠保存在 _origSrc，白底合成另外處理 */
-            window._bnLogos.push({ id:id, src:finalSrc, _origSrc:finalSrc });
-            window._bnLogoDataUrl = window._bnLogos[0].src;
-            renderLogoList();
-            /* 若白底開關已開啟，立刻合成白底版本 */
-            if (window._bnLogoWhiteBg) {
-              _applyWhiteBgToAll(function(){ broadcast({type:'bn-logos', logos:window._bnLogos}); if (typeof saveHistory === 'function') saveHistory(); });
-            } else {
-              broadcast({type:'bn-logos', logos:window._bnLogos});
-              if (typeof saveHistory === 'function') saveHistory();
-            }
-          });
-        }).catch(function(){ /* 載入失敗直接用原圖 */
+        /* LOGO 一律保留使用者上傳的原始邊界，不做自動裁切
+           （要裁掉透明/白色邊距，請用 LOGO 選單的「裁切」自行框選）。
+           這裡只限制最大尺寸，避免大圖佔用記憶體；讀取失敗會回傳原 src。 */
+        _resizeIfNeeded(src, 800, function(finalSrc) {
           var id = 'logo_' + Date.now();
-          window._bnLogos.push({ id:id, src:src, _origSrc:src });
+          /* 原始圖（未加白底）永遠保存在 _origSrc，白底合成另外處理 */
+          window._bnLogos.push({ id:id, src:finalSrc, _origSrc:finalSrc });
           window._bnLogoDataUrl = window._bnLogos[0].src;
           renderLogoList();
-          broadcast({type:'bn-logos', logos:window._bnLogos});
-          if (typeof saveHistory === 'function') saveHistory();
+          /* 若白底開關已開啟，立刻合成白底版本 */
+          if (window._bnLogoWhiteBg) {
+            _applyWhiteBgToAll(function(){ broadcast({type:'bn-logos', logos:window._bnLogos}); if (typeof saveHistory === 'function') saveHistory(); });
+          } else {
+            broadcast({type:'bn-logos', logos:window._bnLogos});
+            if (typeof saveHistory === 'function') saveHistory();
+          }
         });
       });
     }
@@ -1056,7 +1043,7 @@
         /* 如果是已有的商品直接用，否則先 trimAlpha */
         if(!item.fromExisting){
           var img=await loadImg(src);
-          /* trimAlpha：只裁透明邊距，autoTrim 的白色排除邏輯會誤裁白色系商品 */
+          /* trimAlpha：只裁透明邊距，排除白色像素的做法會誤裁白色系商品 */
           var trimmed=trimAlpha(img);
           src=trimmed.src;
           item.ratio=trimmed.ratio;
