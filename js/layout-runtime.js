@@ -501,6 +501,13 @@
 
       if (!logos.length) { zone.style.opacity=''; zone.style.background=''; return; }
 
+      /* 廠商 LOGO 圓角:HBN / IG方 / flex 三個分支共用同一個值。
+         父層 bn-editor-plugin.js 的 LOGO_ROUND_CSS 也是 10px —— 側欄縮圖
+         要跟畫布長一樣,改這裡就要一起改那邊。
+         lg.round 已由父層折算過:白底開著時白框自己就是圓角矩形,
+         父層不會送 round 過來(見 _bnLogoWire())。 */
+      var LOGO_ROUND_CSS = 'border-radius:10px;';
+
       /* IG方：只取第一張 */
       if (isIGSquare) logos = logos.slice(0, 1);
       if (isDDCard && !isIGSquare) logos = logos.slice(0, 1); /* ddcard橫也只取一張 */
@@ -521,7 +528,7 @@
 
         logos.forEach(function(lg, i){
           var img = new Image(); img.className = 'bn-logo-img';
-          var roundCss = lg.round ? 'border-radius:10px;' : '';
+          var roundCss = lg.round ? LOGO_ROUND_CSS : '';
           /* 初始設為 0x0 完全隱藏，onload 後才設定精確尺寸
              避免 height:100% 在計算前造成拉伸 */
           img.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;'+
@@ -577,7 +584,7 @@
         zone.style.transformOrigin = '';
         var lg0 = logos[0];
         var img0 = new Image(); img0.className = 'bn-logo-img';
-        var roundCss0 = lg0.round ? 'border-radius:10px;' : '';
+        var roundCss0 = lg0.round ? LOGO_ROUND_CSS : '';
         /* max-width/max-height 100% + width/height auto = contain 效果，不裁切 */
         img0.style.cssText = 'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;pointer-events:none;display:block;'+roundCss0;
         img0.src = lg0.src;
@@ -600,7 +607,7 @@
 
         logos.forEach(function(lg) {
           var img = new Image(); img.className = 'bn-logo-img';
-          var rCss = lg.round ? 'border-radius:10px;' : '';
+          var rCss = lg.round ? LOGO_ROUND_CSS : '';
           img.style.cssText = 'width:0;height:0;object-fit:contain;pointer-events:none;display:none;flex-shrink:0;' + rCss;
           img.src = lg.src;
           flexImgs.push(img);

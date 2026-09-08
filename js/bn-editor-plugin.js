@@ -151,6 +151,209 @@
       });
     }
 
+    /* ══ LOGO 影像管線 ═══════════════════════════════════════════════
+       每張 LOGO 的像素只有一個衍生方向,不可逆推:
+
+         srcRaw ──裁切──▶ _origSrc(基底) ──白底──▶ src(成品)
+                                              └─ round:CSS 圓角,只在沒白底時生效
+
+       欄位契約(也是暫存 JSON / Undo 快照存的東西):
+         _origSrc  基底 —— 裁切後、未加白底的像素。裁切只讀它、也只寫它。
+         src       成品 —— 基底套上白底的結果;白底關著時就等於基底。
+                   永遠是衍生值,任何時候都能由基底重算。
+         srcRaw    上傳時的原圖 —— 只有「裁切過」才存(未裁切時基底就是原圖),
+                   供選單的「還原原圖」。存在與否就是「是否裁切過」的旗標。
+         round     圓角開關(CSS 層,不烤進像素)。
+
+       為什麼要這樣分:
+       舊版把「裁切」寫進 src、「白底」卻一律從 _origSrc 重算,兩條路各寫
+       各的 —— 於是裁切後一開白底就跳回未裁切版本,而白底開著時裁切又會
+       把白框烤進圖裡。改成單一衍生方向後,白底/留白/圓角都只是基底的
+       表現層,可以任意反覆切換而不吃掉裁切結果。
+
+       ★ 所有 LOGO 變更請以 _bnCommitLogos() 收尾(重算 src → 重繪側欄 →
+         廣播 → 記歷史),不要自己拼 broadcast({type:'bn-logos'})。
+       ────────────────────────────────────────────────────────────────── */
+
+    /* 圓角半徑:側欄縮圖與畫布共用同一個值,預覽才會等於輸出。
+       畫布端在 layout-runtime.js 的 roundCss(同樣 10px),改這裡要一起改。 */
+    var LOGO_ROUND_CSS = '10px';
+
+    function _bnLogoBase(lg){ return (lg && (lg._origSrc || lg.src)) || ''; }
+    function _bnLogoIsCropped(lg){ return !!(lg && lg.srcRaw); }
+    /* 有白底時不套 CSS 圓角:白底合成出來的白框本身就是圓角矩形,
+       再疊一層只會把白框四角切掉。lo.round 的值保留,關掉白底就恢復。 */
+    function _bnLogoRoundOn(lg){ return !!(lg && lg.round) && !window._bnLogoWhiteBg; }
+
+    function _bnMakeLogo(id, src){
+      return { id:id, src:src, _origSrc:src, round:false };
+    }
+    /* 裁切結果 → 基底。第一次裁切時才把原圖挪進 srcRaw,
+       所以重複裁切永遠留得住「上傳時」的那一張。 */
+    function _bnSetLogoBase(lg, newSrc){
+      if(!lg.srcRaw) lg.srcRaw = _bnLogoBase(lg);
+      lg._origSrc = newSrc;
+    }
+    function _bnResetLogoBase(lg){
+      if(lg.srcRaw){ lg._origSrc = lg.srcRaw; delete lg.srcRaw; }
+    }
+
+    /* 補齊欄位。刻意不重算 src —— 快照/暫存檔存的 src 就是當時的成品,
+       在這裡重算既多餘(非同步)又會打亂還原。 */
+    function _bnNormalizeLogo(lg){
+      if(!lg) return lg;
+      if(!lg._origSrc) lg._origSrc = lg.src || '';   /* v1 舊暫存檔只有 src */
+      if(!lg.src)      lg.src      = lg._origSrc;
+      lg.round = !!lg.round;
+      return lg;
+    }
+    function _bnNormalizeLogos(){
+      window._bnLogos = window._bnLogos || [];
+      window._bnLogos.forEach(_bnNormalizeLogo);
+      return window._bnLogos;
+    }
+    function _bnFindLogo(lid){
+      var hit = null;
+      _bnNormalizeLogos().forEach(function(x){ if(x.id === lid) hit = x; });
+      return hit;
+    }
+
+    /* 送進 iframe 的最小 payload:畫布只讀 src 與 round(layout-runtime.js)。
+       ★ 不要直接送 window._bnLogos —— _origSrc/srcRaw 是同尺寸的 data URL,
+         整包送等於把每張 LOGO 複製兩三份 structured-clone 給每個 iframe。
+       ★ round 在這裡就地折算成「畫布實際要不要圓角」,畫布端不必知道白底。 */
+    function _bnLogoWire(){
+      return _bnNormalizeLogos().map(function(lg){
+        return { id:lg.id, src:lg.src, round:_bnLogoRoundOn(lg) };
+      });
+    }
+
+    /* 基底 → 成品:依目前白底設定合成(白底關著時成品就是基底)。
+       白底一定要烤進 PNG 而不能用 CSS —— html2canvas 匯出時只認得
+       真的畫在像素上的東西。 */
+    function _bnRenderLogo(lg, cb){
+      _bnNormalizeLogo(lg);
+      var base = _bnLogoBase(lg);
+      if(!window._bnLogoWhiteBg || !base){
+        lg.src = base;
+        if(cb) cb();
+        return;
+      }
+      var img = new Image();
+      img.onload = function(){
+        /* ★ 2026-08 修正:白底「切著邊」的真正原因
+           ──────────────────────────────────────────────────────────
+           舊版:畫布 = LOGO 原始尺寸,白色圓角矩形再從邊緣「向內」縮 pad,
+           最後 LOGO 以滿版 drawImage(img,0,0) 蓋上去。
+           結果白底其實比 LOGO【小】了 pad —— LOGO 最外圈 pad 寬的那一圈
+           底下是透明的、沒有白色,看起來就像白底被切掉一角。
+           這不是視覺錯覺,是座標畫錯邊。
+
+           新版:畫布 = LOGO 尺寸 +【向外】各加 pad,白底鋪滿整個畫布,
+           LOGO 置中畫在 (pad, pad),於是四周都有真正的白色留白。
+
+           ★ pad 隨 LOGO 尺寸等比,不固定 px:各家 LOGO 原始像素從幾百到
+           上千不等,而它們之後還會被等面積排版以不同倍率縮放。固定 4px
+           在大圖上等於沒有 —— 這也是「加了白底卻看不太出來」的主因。
+           ★ 比例由側欄滑桿(_bnLogoPad)決定:0 = 完全貼齊 LOGO,
+           0.40 = 短邊 40% 的厚白框。下限保 6px,避免小圖白邊細到看不見。 */
+        var natW = img.naturalWidth, natH = img.naturalHeight;
+        var padRatio = (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10;
+        padRatio = Math.max(0, Math.min(0.40, padRatio));
+        var pad  = padRatio <= 0 ? 0
+                 : Math.max(6, Math.round(Math.min(natW, natH) * padRatio));
+        var cw   = natW + pad * 2;
+        var ch   = natH + pad * 2;
+        /* 圓角:跟著 pad 走,並夾住上限避免半徑超過邊長一半導致路徑異常 */
+        var r    = Math.min(Math.round(pad * 1.8), Math.floor(Math.min(cw, ch) / 2));
+
+        var c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        var ctx = c.getContext('2d');
+
+        /* 白色圓角矩形鋪滿整個畫布(不再內縮) */
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.moveTo(r, 0);
+        ctx.lineTo(cw - r, 0);
+        ctx.quadraticCurveTo(cw, 0, cw, r);
+        ctx.lineTo(cw, ch - r);
+        ctx.quadraticCurveTo(cw, ch, cw - r, ch);
+        ctx.lineTo(r, ch);
+        ctx.quadraticCurveTo(0, ch, 0, ch - r);
+        ctx.lineTo(0, r);
+        ctx.quadraticCurveTo(0, 0, r, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        /* LOGO 置中,四周各留 pad */
+        ctx.drawImage(img, pad, pad);
+        lg.src = c.toDataURL('image/png');
+        if(cb) cb();
+      };
+      img.onerror = function(){ lg.src = base; if(cb) cb(); };
+      img.src = base;
+    }
+
+    function _bnRenderAllLogos(cb){
+      var list = _bnNormalizeLogos();
+      var pending = list.length;
+      if(!pending){ if(cb) cb(); return; }
+      list.forEach(function(lg){
+        _bnRenderLogo(lg, function(){ if(!--pending && cb) cb(); });
+      });
+    }
+
+    /* 廣播 + 同步向下相容的 _bnLogoDataUrl(第一張的成品) */
+    function _bnPushLogos(){
+      var wire = _bnLogoWire();
+      window._bnLogoDataUrl = wire.length ? wire[0].src : null;
+      broadcast({type:'bn-logos', logos:wire});
+    }
+
+    /* 所有 LOGO 變更的唯一收尾:重算成品 → 重繪側欄 → 廣播 →(可選)記歷史 */
+    function _bnCommitLogos(save){
+      _bnRenderAllLogos(function(){
+        renderLogoList();
+        _bnPushLogos();
+        if(save && typeof saveHistory === 'function') saveHistory();
+      });
+    }
+
+    /* 排序 / 移除:沒動到像素,不必重新合成 */
+    function _bnMoveLogo(lid, dir){
+      var list = _bnNormalizeLogos();
+      var idx = -1;
+      list.forEach(function(x,i){ if(x.id === lid) idx = i; });
+      var to = idx + dir;
+      if(idx < 0 || to < 0 || to >= list.length) return;
+      var tmp = list[idx]; list[idx] = list[to]; list[to] = tmp;
+      renderLogoList();
+      _bnPushLogos();
+      if (typeof saveHistory === 'function') saveHistory();
+    }
+    function _bnRemoveLogo(lid){
+      window._bnLogos = _bnNormalizeLogos().filter(function(x){ return x.id !== lid; });
+      renderLogoList();
+      broadcast({type:'bn-logo-remove', id:lid});
+      _bnPushLogos();
+      if (typeof saveHistory === 'function') saveHistory();
+    }
+
+    /* 白底開關的外觀同步。放模組層讓側欄事件與 bn.html 的還原流程
+       (window._bnSyncLogoWhiteBg)共用同一份實作 —— 兩邊各寫一份的話,
+       改了樣式只改到一邊,還原後開關外觀就會跟實際狀態不一致。 */
+    function syncWhiteBgToggle(){
+      var wbToggle = document.getElementById('bn-logo-whitebg-toggle');
+      var wbKnob   = document.getElementById('bn-logo-whitebg-knob');
+      if(!wbToggle || !wbKnob) return;
+      var on = window._bnLogoWhiteBg;
+      wbToggle.style.background  = on ? 'var(--accent,#ee4d2d)' : 'var(--bg3,#333333)';
+      wbToggle.style.borderColor = on ? 'var(--accent,#ee4d2d)' : 'var(--border,#3d3d3d)';
+      wbKnob.style.transform  = on ? 'translateX(16px)' : 'translateX(0)';
+      wbKnob.style.background = on ? '#fff' : 'var(--text3,#666666)';
+    }
+
     /* ══ Logo 上傳 ══ */
     function insertLogoUI(){
       var scroll=document.getElementById('sidebar-scroll');
@@ -204,27 +407,17 @@
 
       /* 白底 toggle 事件 */
       var wbToggle = document.getElementById('bn-logo-whitebg-toggle');
-      var wbKnob   = document.getElementById('bn-logo-whitebg-knob');
-      function syncWhiteBgToggle() {
-        var on = window._bnLogoWhiteBg;
-        wbToggle.style.background = on ? 'var(--accent,#ee4d2d)' : 'var(--bg3,#333333)';
-        wbToggle.style.borderColor = on ? 'var(--accent,#ee4d2d)' : 'var(--border,#3d3d3d)';
-        wbKnob.style.transform = on ? 'translateX(16px)' : 'translateX(0)';
-        wbKnob.style.background = on ? '#fff' : 'var(--text3,#666666)';
-      }
       if (wbToggle) {
         syncWhiteBgToggle();
         wbToggle.addEventListener('click', function(){
           window._bnLogoWhiteBg = !window._bnLogoWhiteBg;
           syncWhiteBgToggle();
           window._bnSyncLogoSliders && window._bnSyncLogoSliders();
-          if (!window._bnLogos.length) return;
-          /* 重新合成所有 LOGO 並廣播 */
-          _applyWhiteBgToAll(function(){
-            renderLogoList();
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          });
+          /* 白底只是 src 的衍生層:整份從基底重算即可。
+             裁切結果留在基底裡,所以白底反覆開關都不會掉;
+             圓角則由 _bnLogoWire() 就地折算(有白底時白框自己就是圓角),
+             這裡不需要特別處理。 */
+          _bnCommitLogos(true);
         });
       }
 
@@ -256,11 +449,7 @@
             if (typeof saveHistory === 'function') saveHistory();
             return;   /* 白底沒開 → 只記下設定值,不需重新合成 */
           }
-          _applyWhiteBgToAll(function(){
-            renderLogoList();
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          });
+          _bnCommitLogos(true);
         });
       }
       window._bnSyncLogoSliders();
@@ -417,66 +606,48 @@
     }
 
 
+    /* 側欄清單:縮圖直接顯示「成品 src + 折算後的圓角」,所見即輸出。
+       (舊版縮圖用 border-radius:50% 畫圓、畫布卻是 10px 圓角,兩邊不一致) */
     function renderLogoList(){
       var list=document.getElementById('bn-logo-list');
       if(!list)return;
+      _bnNormalizeLogos();
       list.innerHTML='';
       window._bnLogos.forEach(function(lg,i){
         var row=document.createElement('div');row.className='bn-prod-item';
-        var img=document.createElement('img');img.src=lg.src;
-        var name=document.createElement('span');name.textContent='Logo '+(i+1);
-        /* 恢復圓邊狀態 */
-        if(lg.round){ img.dataset.bnLogoRound='1'; img.style.borderRadius='50%'; }
 
-        /* 編輯按鈕：點了彈出四個選項 */
-        /* ◀ ▶ 換位置箭頭 */
+        var img=document.createElement('img');
+        img.src=lg.src;
+        img.style.borderRadius = _bnLogoRoundOn(lg) ? LOGO_ROUND_CSS : '';
+
+        var name=document.createElement('span');
+        name.textContent='Logo '+(i+1)+(_bnLogoIsCropped(lg)?' ✂':'');
+        if(_bnLogoIsCropped(lg)) name.title='已裁切 —— 可從「編輯 → 還原原圖」回到上傳時的原圖';
+
+        /* ▲▼ 調整前後順序 */
         var moveWrap=document.createElement('div');
         moveWrap.style.cssText='display:flex;flex-direction:column;gap:2px;flex-shrink:0;';
-
         var upLogo=document.createElement('button');upLogo.textContent='▲';upLogo.title='往前';
         var dnLogo=document.createElement('button');dnLogo.textContent='▼';dnLogo.title='往後';
-        var logoIdx = window._bnLogos.indexOf(lg);
-        upLogo.disabled = logoIdx === 0;
-        dnLogo.disabled = logoIdx === window._bnLogos.length - 1;
+        upLogo.disabled = i === 0;
+        dnLogo.disabled = i === window._bnLogos.length - 1;
         upLogo.style.opacity = upLogo.disabled ? '0.3' : '1';
         dnLogo.style.opacity = dnLogo.disabled ? '0.3' : '1';
-
-        upLogo.addEventListener('click',(function(lid){return function(){  
-          saveHistory();
-          var idx=window._bnLogos.findIndex(function(x){return x.id===lid;});
-          if(idx<=0)return;
-          var tmp=window._bnLogos[idx]; window._bnLogos[idx]=window._bnLogos[idx-1]; window._bnLogos[idx-1]=tmp;
-          window._bnLogoDataUrl=window._bnLogos[0].src;
-          renderLogoList(); broadcast({type:'bn-logos',logos:window._bnLogos});
-        };})(lg.id));
-
-        dnLogo.addEventListener('click',(function(lid){return function(){
-          var idx=window._bnLogos.findIndex(function(x){return x.id===lid;});
-          if(idx<0||idx>=window._bnLogos.length-1)return;
-          var tmp=window._bnLogos[idx]; window._bnLogos[idx]=window._bnLogos[idx+1]; window._bnLogos[idx+1]=tmp;
-          window._bnLogoDataUrl=window._bnLogos[0].src;
-          renderLogoList(); broadcast({type:'bn-logos',logos:window._bnLogos});
-          if (typeof saveHistory === 'function') saveHistory();
-        };})(lg.id));
-
+        upLogo.addEventListener('click',function(){ _bnMoveLogo(lg.id,-1); });
+        dnLogo.addEventListener('click',function(){ _bnMoveLogo(lg.id, 1); });
         moveWrap.appendChild(upLogo); moveWrap.appendChild(dnLogo);
 
         var editBtn=document.createElement('button');editBtn.textContent='編輯';
-        editBtn.addEventListener('click',(function(lid, imgRef){return function(e){
+        editBtn.addEventListener('click',function(e){
           e.stopPropagation();
-          showLogoMenu(lid, imgRef, editBtn);
-        };})(lg.id, img));
+          showLogoMenu(lg.id, editBtn);
+        });
 
-        var btn=document.createElement('button');btn.textContent='移除';
-        btn.addEventListener('click',(function(lid){return function(){
-          window._bnLogos=window._bnLogos.filter(function(x){return x.id!==lid;});
-          window._bnLogoDataUrl=window._bnLogos.length?window._bnLogos[0].src:null;
-          renderLogoList();
-          broadcast({type:'bn-logo-remove',id:lid});
-          broadcast({type:'bn-logos',logos:window._bnLogos});
-          if (typeof saveHistory === 'function') saveHistory();
-        };})(lg.id));
-        row.appendChild(img);row.appendChild(name);row.appendChild(moveWrap);row.appendChild(editBtn);row.appendChild(btn);
+        var rmBtn=document.createElement('button');rmBtn.textContent='移除';
+        rmBtn.addEventListener('click',function(){ _bnRemoveLogo(lg.id); });
+
+        row.appendChild(img);row.appendChild(name);row.appendChild(moveWrap);
+        row.appendChild(editBtn);row.appendChild(rmBtn);
         list.appendChild(row);
       });
       /* drop 按鈕狀態 */
@@ -486,12 +657,13 @@
 
 
     /* 工具列「編輯」按鈕的選單 */
-    function showLogoMenu(lid, imgEl, anchorEl){
+    function showLogoMenu(lid, anchorEl){
       function doShow(){
         if(!window.BNLogoMenu){ return; }
-        var n = window._bnLogos.length;
-        var idx = window._bnLogos.findIndex(function(x){return x.id===lid;});
-        /* 建選單 */
+        var lo = _bnFindLogo(lid);
+        if(!lo) return;
+
+        /* 建選單(常駐 DOM,每次開啟重建按鈕) */
         var menu = document.getElementById('_bn_logo_inline_menu');
         if(!menu){
           menu = document.createElement('div');
@@ -509,37 +681,49 @@
           });
         }
 
-        var items = [
-          { label:'裁切', action:'crop' },
-          { label:'加圓邊', action:'round' },
-        ];
+        /* 選單內容一律由資料(lo)決定,不再讀縮圖的 dataset ——
+           dataset 只是外觀,會跟資料不同步。 */
+        var items = [{ label:'裁切', action:'crop' }];
+        if(_bnLogoIsCropped(lo)) items.push({ label:'還原原圖', action:'reset' });
+        items.push({
+          label   : lo.round ? '取消圓角' : '加圓角',
+          action  : 'round',
+          /* 有白底時圓角由白框自己提供(白框本來就是圓角矩形),
+             再疊一層 CSS 圓角只會把白框四角切掉 → 停用並說明原因。
+             lo.round 的值仍保留,關掉白底後自動恢復。 */
+          disabled: !!window._bnLogoWhiteBg,
+          hint    : '白底已內含'
+        });
 
         menu.innerHTML = '';
         items.forEach(function(item){
-          if(item.hidden) return;
           var b = document.createElement('button');
-          b.textContent = item.action === 'round'
-            ? (imgEl.dataset.bnLogoRound === '1' ? '取消圓邊' : '加圓邊')
-            : item.label;
-          b.style.cssText = 'display:block;width:100%;border:0;background:transparent;color:#fff;text-align:left;padding:7px 14px;font-size:13px;cursor:pointer;';
-          b.addEventListener('mouseover', function(){ this.style.background='#2b2b2b'; });
-          b.addEventListener('mouseout',  function(){ this.style.background='transparent'; });
-          b.addEventListener('click', function(e){
-            e.stopPropagation();
-            menu.style.display = 'none';
-            handleLogoAction(item.action, lid, imgEl);
-          });
+          b.textContent = item.label + (item.disabled && item.hint ? '（'+item.hint+'）' : '');
+          b.disabled = !!item.disabled;
+          b.style.cssText = 'display:block;width:100%;border:0;background:transparent;text-align:left;'+
+                            'padding:7px 14px;font-size:13px;white-space:nowrap;'+
+                            'color:'+(item.disabled?'#777':'#fff')+';'+
+                            'cursor:'+(item.disabled?'default':'pointer')+';';
+          if(!item.disabled){
+            b.addEventListener('mouseover', function(){ this.style.background='#2b2b2b'; });
+            b.addEventListener('mouseout',  function(){ this.style.background='transparent'; });
+            b.addEventListener('click', function(e){
+              e.stopPropagation();
+              menu.style.display = 'none';
+              handleLogoAction(item.action, lid);
+            });
+          }
           menu.appendChild(b);
         });
 
-        /* 定位到按鈕旁邊 */
-        var rect = anchorEl.getBoundingClientRect();
-        var left = rect.left;
-        var top  = rect.bottom + 4;
-        if(left + 130 > window.innerWidth) left = window.innerWidth - 134;
-        menu.style.left = left + 'px';
-        menu.style.top  = top  + 'px';
+        /* 定位到按鈕旁邊:先顯示才量得到寬度(寬度會隨提示文字變) */
+        menu.style.left = '-9999px';
+        menu.style.top  = '0px';
         menu.style.display = 'block';
+        var rect = anchorEl.getBoundingClientRect();
+        var mw   = menu.offsetWidth || 120;
+        menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - mw - 8)) + 'px';
+        menu.style.top  = (rect.bottom + 4) + 'px';
       }
 
       if(window.BNLogoMenu){ doShow(); }
@@ -551,205 +735,47 @@
       }
     }
 
-    function handleLogoAction(action, lid, imgEl){
-      if(action === 'crop'){
-        window.BNLogoMenu.openCropEditor(imgEl.src, function(newSrc){
-          if(!newSrc) return;
-          var lo = window._bnLogos.find(function(x){return x.id===lid;});
-          if(lo){
-            lo.src = newSrc;
-            imgEl.src = newSrc;
-            window._bnLogoDataUrl = window._bnLogos[0].src;
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          }
-        });
-      } else if(action === 'swap'){
-        var idx = window._bnLogos.findIndex(function(x){return x.id===lid;});
-        if(idx >= 0){
-          var next = (idx + 1) % window._bnLogos.length;
-          var tmp = window._bnLogos[idx];
-          window._bnLogos[idx] = window._bnLogos[next];
-          window._bnLogos[next] = tmp;
-          window._bnLogoDataUrl = window._bnLogos[0].src;
-          renderLogoList();
-          broadcast({type:'bn-logos', logos:window._bnLogos});
-          if (typeof saveHistory === 'function') saveHistory();
-        }
-      } else if(action === 'round'){
-        var isOn = imgEl.dataset.bnLogoRound === '1';
-        imgEl.dataset.bnLogoRound = isOn ? '' : '1';
-        imgEl.style.borderRadius  = isOn ? '' : '10px';
-        /* 把 round 狀態存進 _bnLogos */
-        var lo = window._bnLogos.find(function(x){return x.id===lid;});
-        if(lo) lo.round = !isOn;
-        broadcast({type:'bn-logos', logos:window._bnLogos});
-        renderLogoList();
-        if (typeof saveHistory === 'function') saveHistory();
-      } else if(action === 'delete'){
-        window._bnLogos = window._bnLogos.filter(function(x){return x.id!==lid;});
-        window._bnLogoDataUrl = window._bnLogos.length ? window._bnLogos[0].src : null;
-        renderLogoList();
-        broadcast({type:'bn-logo-remove', id:lid});
-        broadcast({type:'bn-logos', logos:window._bnLogos});
-        if (typeof saveHistory === 'function') saveHistory();
-      }
-    }
+    function handleLogoAction(action, lid){
+      var lo = _bnFindLogo(lid);
+      if(!lo) return;
 
-    /* ══ Logo Menu（logo-editor-plugin.js 的 BNLogoMenu） ══ */
-    function attachLogoMenu(lid, imgEl){
-      function doAttach(){
-        if(!window.BNLogoMenu){ return; }
-        var n = window._bnLogos.length;
-        window.BNLogoMenu.attach(imgEl, {
-          showSwap: n > 1,
-          onEdit: function(el, newSrc){
-            var lo = window._bnLogos.find(function(x){return x.id===lid;});
-            if(lo){
-              lo.src = newSrc;
-              el.src = newSrc;
-              window._bnLogoDataUrl = window._bnLogos[0].src;
-              broadcast({type:'bn-logos', logos:window._bnLogos});
-              if (typeof saveHistory === 'function') saveHistory();
-            }
-          },
-          onSwap: function(){
-            /* 往右移：把此 logo 往後排一位 */
-            var idx = window._bnLogos.findIndex(function(x){return x.id===lid;});
-            if(idx < 0) return;
-            var next = (idx + 1) % window._bnLogos.length;
-            var tmp = window._bnLogos[idx];
-            window._bnLogos[idx] = window._bnLogos[next];
-            window._bnLogos[next] = tmp;
-            window._bnLogoDataUrl = window._bnLogos[0].src;
-            renderLogoList();
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          },
-          onDelete: function(){
-            window._bnLogos = window._bnLogos.filter(function(x){return x.id!==lid;});
-            window._bnLogoDataUrl = window._bnLogos.length ? window._bnLogos[0].src : null;
-            renderLogoList();
-            broadcast({type:'bn-logo-remove', id:lid});
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          },
-          onRound: function(el, isOn){
-            var lo = window._bnLogos.find(function(x){return x.id===lid;});
-            if(lo){ lo.round = !!isOn; }
-            renderLogoList();
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          }
+      if(action === 'crop'){
+        /* ★ 一律裁「基底」,不是側欄看到的那張。
+           白底開著時畫面上那張是白底合成品,裁它等於把白框烤進基底,
+           下次動留白/關白底時整份重算就會把裁切結果沖掉 ——
+           這正是舊版「裁切與白底互相打架」的成因。 */
+        window.BNLogoMenu.openCropEditor(_bnLogoBase(lo), function(newSrc){
+          if(!newSrc) return;
+          _bnSetLogoBase(lo, newSrc);
+          _bnCommitLogos(true);
         });
-      }
-      if(window.BNLogoMenu){
-        doAttach();
-      } else {
-        var s=document.createElement('script');
-        s.src='js/logo-editor-plugin.js';
-        s.onload=doAttach;
-        document.head.appendChild(s);
+
+      } else if(action === 'reset'){
+        /* 還原原圖:基底回到上傳時的像素,白底/圓角/排序設定都不動 */
+        _bnResetLogoBase(lo);
+        _bnCommitLogos(true);
+
+      } else if(action === 'round'){
+        if(window._bnLogoWhiteBg) return;   /* 白底已內含圓角,選單那顆本來就是 disabled */
+        lo.round = !lo.round;
+        /* 圓角是 CSS 層,沒動到像素 → 不必重新合成,重繪 + 廣播就好 */
+        renderLogoList();
+        _bnPushLogos();
+        if (typeof saveHistory === 'function') saveHistory();
       }
     }
 
     function doLoadLogo(file){
       if(window._bnLogos.length>=MAX_LOGOS)return;
       readFile(file).then(function(src){
-        /* LOGO 一律保留使用者上傳的原始邊界，不做自動裁切
-           （要裁掉透明/白色邊距，請用 LOGO 選單的「裁切」自行框選）。
-           這裡只限制最大尺寸，避免大圖佔用記憶體；讀取失敗會回傳原 src。 */
+        /* LOGO 一律保留使用者上傳的原始邊界,不做自動裁切
+           (要裁掉透明/白色邊距,請用 LOGO 選單的「裁切」自行框選)。
+           這裡只限制最大尺寸,避免大圖佔用記憶體;讀取失敗會回傳原 src。 */
         _resizeIfNeeded(src, 800, function(finalSrc) {
-          var id = 'logo_' + Date.now();
-          /* 原始圖（未加白底）永遠保存在 _origSrc，白底合成另外處理 */
-          window._bnLogos.push({ id:id, src:finalSrc, _origSrc:finalSrc });
-          window._bnLogoDataUrl = window._bnLogos[0].src;
-          renderLogoList();
-          /* 若白底開關已開啟，立刻合成白底版本 */
-          if (window._bnLogoWhiteBg) {
-            _applyWhiteBgToAll(function(){ broadcast({type:'bn-logos', logos:window._bnLogos}); if (typeof saveHistory === 'function') saveHistory(); });
-          } else {
-            broadcast({type:'bn-logos', logos:window._bnLogos});
-            if (typeof saveHistory === 'function') saveHistory();
-          }
+          window._bnLogos.push(_bnMakeLogo('logo_' + Date.now(), finalSrc));
+          /* 白底若已開啟,_bnCommitLogos 的重算會自動合成,不必在這裡分支 */
+          _bnCommitLogos(true);
         });
-      });
-    }
-
-    /* ── 白底合成：把所有 LOGO 加上白色底色（或還原原圖）──
-       whiteBg=true  → src 換成白底合成版（_origSrc 保留原圖）
-       whiteBg=false → src 還原為 _origSrc
-    */
-    function _applyWhiteBgToAll(cb) {
-      var pending = window._bnLogos.length;
-      if (!pending) { if(cb) cb(); return; }
-      window._bnLogos.forEach(function(lg) {
-        if (!window._bnLogoWhiteBg) {
-          /* 還原原圖 */
-          lg.src = lg._origSrc || lg.src;
-          if (!--pending && cb) cb();
-          return;
-        }
-        /* 合成白底 */
-        var img = new Image();
-        img.onload = function() {
-          /* ★ 2026-08 修正:白底「切著邊」的真正原因
-             ──────────────────────────────────────────────────────────
-             舊版:畫布 = LOGO 原始尺寸,白色圓角矩形再從邊緣「向內」縮 pad,
-             最後 LOGO 以滿版 drawImage(img,0,0) 蓋上去。
-             結果白底其實比 LOGO【小】了 pad ——
-             LOGO 最外圈 pad 寬的那一圈底下是透明的、沒有白色,
-             看起來就像白底被切掉一角。這不是視覺錯覺,是座標畫錯邊。
-
-             新版:畫布 = LOGO 尺寸 +【向外】各加 pad,白底鋪滿整個畫布,
-             LOGO 置中畫在 (pad, pad),於是四周都有真正的白色留白。
-
-             ★ pad 改為隨 LOGO 尺寸等比,不再固定 4px:
-             各家 LOGO 的原始像素尺寸差異極大(幾百到上千 px),而它們之後
-             還會被等面積排版以【不同倍率】縮放。固定 4px 在大圖上等於沒有,
-             縮放後更是趨近 0 —— 這也是「加了白底卻看不太出來」的主因。
-             改用短邊的 10%(下限 6px)後,不同 LOGO 縮放後的白邊粗細
-             才會落在相近的量級。 */
-          /* ★ 規格 3.1「logo 無法拉大白框至合適大小 / 太小會縮減到 logo 圖案」:
-             留白比例改為使用者可調(側欄滑桿),不再寫死 10%。
-             0 = 完全貼齊 LOGO(等同沒有白邊),0.40 = 短邊 40% 的厚白框。
-             下限仍保 6px,避免小圖在低比例下白邊細到看不見。 */
-          var natW = img.naturalWidth, natH = img.naturalHeight;
-          var padRatio = (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10;
-          padRatio = Math.max(0, Math.min(0.40, padRatio));
-          var pad  = padRatio <= 0 ? 0
-                   : Math.max(6, Math.round(Math.min(natW, natH) * padRatio));
-          var cw   = natW + pad * 2;
-          var ch   = natH + pad * 2;
-          /* 圓角:跟著 pad 走,並夾住上限避免半徑超過邊長一半導致路徑異常 */
-          var r    = Math.min(Math.round(pad * 1.8), Math.floor(Math.min(cw, ch) / 2));
-
-          var c = document.createElement('canvas');
-          c.width = cw; c.height = ch;
-          var ctx = c.getContext('2d');
-
-          /* 白色圓角矩形鋪滿整個畫布(不再內縮) */
-          ctx.fillStyle = '#FFFFFF';
-          ctx.beginPath();
-          ctx.moveTo(r, 0);
-          ctx.lineTo(cw - r, 0);
-          ctx.quadraticCurveTo(cw, 0, cw, r);
-          ctx.lineTo(cw, ch - r);
-          ctx.quadraticCurveTo(cw, ch, cw - r, ch);
-          ctx.lineTo(r, ch);
-          ctx.quadraticCurveTo(0, ch, 0, ch - r);
-          ctx.lineTo(0, r);
-          ctx.quadraticCurveTo(0, 0, r, 0);
-          ctx.closePath();
-          ctx.fill();
-
-          /* LOGO 置中,四周各留 pad */
-          ctx.drawImage(img, pad, pad);
-          lg.src = c.toDataURL('image/png');
-          if (!--pending && cb) cb();
-        };
-        img.onerror = function() { if (!--pending && cb) cb(); };
-        img.src = lg._origSrc || lg.src;
       });
     }
 
@@ -1584,7 +1610,7 @@
       if(origOnReady)origOnReady(id);
       setTimeout(function(){
         if(window._bnLogos&&window._bnLogos.length){
-          broadcastTo(id,{type:'bn-logos',logos:window._bnLogos});
+          broadcastTo(id,{type:'bn-logos',logos:_bnLogoWire()});
         } else if(window._bnLogoDataUrl){
           broadcastTo(id,{type:'bn-logo',dataUrl:window._bnLogoDataUrl});
         }
@@ -1699,8 +1725,9 @@
     };
 
     window._bnBroadcastLogos = function(){
+      /* 沒有 LOGO 時刻意不廣播:還原流程中送空陣列會把畫布上的 LOGO 清掉 */
       if(window._bnLogos && window._bnLogos.length){
-        broadcast({type:'bn-logos', logos:window._bnLogos});
+        broadcast({type:'bn-logos', logos:_bnLogoWire()});
       }
     };
 
@@ -1716,16 +1743,7 @@
       if (window._bnPushHistoryState) window._bnPushHistoryState(true);
     };
 
-    window._bnSyncLogoWhiteBg = function(){
-      var wbToggle = document.getElementById('bn-logo-whitebg-toggle');
-      var wbKnob   = document.getElementById('bn-logo-whitebg-knob');
-      if(!wbToggle||!wbKnob) return;
-      var on = window._bnLogoWhiteBg;
-      wbToggle.style.background = on ? 'var(--accent,#ee4d2d)' : 'var(--bg3,#333333)';
-      wbToggle.style.borderColor = on ? 'var(--accent,#ee4d2d)' : 'var(--border,#3d3d3d)';
-      wbKnob.style.transform = on ? 'translateX(16px)' : 'translateX(0)';
-      wbKnob.style.background = on ? '#fff' : 'var(--text3,#666666)';
-    };
+    window._bnSyncLogoWhiteBg = syncWhiteBgToggle;
 
     window._bnBroadcastPerson = function(){
       /* ★ per-版位重播(同商品):每個 iframe 取「自己版位」的人物 layout(p.layouts[lid]),

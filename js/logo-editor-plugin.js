@@ -1,18 +1,18 @@
 /*!
- * Logo Menu Plugin v14
- * 從 hbn.html jimmy-new-logo-menu-only-script 抽取
- * 提供：logo 縮圖右上角 ✎ 觸發器 + 下拉選單（編輯/往右移/刪除/加圓角）
- *       + CropperJS Logo 裁切 Modal
+ * Logo 裁切 Modal v14（CropperJS）
  *
  * 使用：
- *   window.BNLogoMenu.attach(imgEl, options)
- *     options.onEdit(imgEl)    → 點「編輯」
- *     options.onSwap(imgEl)    → 點「往右移」（可選）
- *     options.onDelete(imgEl)  → 點「刪除」
- *     options.showSwap         → 是否顯示「往右移」
- *
  *   window.BNLogoMenu.openCropEditor(src, onDone)
- *     → 開啟 CropperJS 裁切視窗，完成後呼叫 onDone(newSrc)
+ *     → 開啟裁切視窗，完成後呼叫 onDone(newSrc)；取消則不呼叫。
+ *
+ * ★ 呼叫端請把「基底」(bn-editor-plugin.js 的 lg._origSrc)傳進來，
+ *   不要傳側欄縮圖上那張 —— 白底開著時縮圖是白底合成品，裁它會把
+ *   白框烤進基底。詳見 bn-editor-plugin.js 的「LOGO 影像管線」。
+ *
+ * ★ 2026-09:原本這支還內含一套 logo 縮圖右上角 ✎ 觸發器 + 下拉選單
+ *   (attach()/logoMenuV14),但 v14 的選單是 bn-editor-plugin.js 自己
+ *   用側欄「編輯」按鈕做的,attach() 從頭到尾沒有任何呼叫點。
+ *   兩套選單並存正是「裁切/白底/圓角」各寫各的 bug 溫床,故整套移除。
  */
 (function(global){
   if(global.__BN_LOGO_MENU_PLUGIN__) return;
@@ -37,39 +37,18 @@
    * 導致 CSS parser 把 "<" ">" 視為非法字元，整條規則（含
    * .cropper-modal-wrap 的 position:fixed 規則）被直接丟棄，
    * 造成 Modal 失去彈窗定位、退化成一般 block 元素沉到頁尾。
-   * 修法：拆成兩個獨立 <style> 元素，內容只放「純 CSS」，
-   * 不再夾帶任何 <style> 標籤文字。
+   * 修法：textContent 內只放「純 CSS」，不再夾帶任何 <style> 標籤文字。
    */
-  function injectCSS(){
-    injectMenuCSS();
-    injectCropperCSS();
-  }
-
-  function injectMenuCSS(){
-    if(document.getElementById('_bn_lm_css')) return;
-    var s = document.createElement('style');
-    s.id = '_bn_lm_css';
-    s.textContent =
-      '.logo-edit-btn,\n.logo-swap-btn,\n.logo-delete-btn,\n.logo-white-btn,\n.logo-main-pen-btn,\n.logo-action-menu{\n  display:none !important;\n}\n' +
-      '.logo-v14-trigger{\n  position:absolute !important;\n  top:-24px !important;\n  right:-2px !important;\n  width:20px !important;\n  height:20px !important;\n  border-radius:50% !important;\n  background:#000 !important;\n  color:#fff !important;\n  display:flex !important;\n  align-items:center !important;\n  justify-content:center !important;\n  cursor:pointer !important;\n  z-index:2147483645 !important;\n  font-size:12px !important;\n  line-height:1 !important;\n  user-select:none !important;\n  box-shadow:0 2px 6px rgba(0,0,0,.25);\n}\n' +
-      '.logo-item,\n#square .brand{ overflow:visible !important; }\n' +
-      '#logoMenuV14{\n  position:fixed !important;\n  min-width:118px !important;\n  background:#111 !important;\n  color:#fff !important;\n  border-radius:10px !important;\n  box-shadow:0 8px 24px rgba(0,0,0,.28) !important;\n  padding:6px 0 !important;\n  display:none !important;\n  z-index:2147483647 !important;\n}\n' +
-      '#logoMenuV14.show{ display:block !important; }\n' +
-      '#logoMenuV14 button{\n  width:100% !important;\n  border:0 !important;\n  background:transparent !important;\n  color:#fff !important;\n  text-align:left !important;\n  padding:7px 12px !important;\n  font-size:12px !important;\n  line-height:1.35 !important;\n  cursor:pointer !important;\n}\n' +
-      '#logoMenuV14 button:hover{ background:#2b2b2b !important; }\n' +
-      '#logoMenuV14 button[hidden]{ display:none !important; }\n' +
-      '.is-exporting .logo-v14-trigger,\n.is-exporting #logoMenuV14{ display:none !important; }\n' +
-      '#logoCropModal{ z-index:2147483646 !important; }';
-    document.head.appendChild(s);
-  }
-
   function injectCropperCSS(){
     if(document.getElementById('_bn_lm_cropper_css')) return;
     var s = document.createElement('style');
     s.id = '_bn_lm_cropper_css';
     /* 這段是修好裁切 Modal 定位的關鍵：position:fixed + inset:0
-       務必確保這裡是「純 CSS」，不能再夾帶任何字面 <style> 標籤文字 */
+       務必確保這裡是「純 CSS」，不能再夾帶任何字面 <style> 標籤文字。
+       z-index 也要疊在最上層：Modal 掛在 document.body，
+       不能被側欄或預覽區蓋住。 */
     s.textContent =
+      '#logoCropModal{ z-index:2147483646 !important; }\n' +
       '.cropper-modal-wrap{\n' +
       '  position:fixed !important; inset:0 !important; background:rgba(0,0,0,.5) !important;\n' +
       '  display:none !important; align-items:center !important; justify-content:center !important;\n' +
@@ -228,84 +207,8 @@
     while(tmp.firstChild) document.body.appendChild(tmp.firstChild);
   }
 
-  /* ── 核心邏輯（從 hbn.html 抽取，移除 hbn 專屬 DOM 依賴） ── */
-
-  var ctx = null;
   var activeCropper = null;
-  var activeTarget = null;
   var _cropDone = null;
-
-  function q(sel, root){ return (root||document).querySelector(sel); }
-
-  function closeMenu(){
-    var menu = document.getElementById('logoMenuV14');
-    if(menu) menu.classList.remove('show');
-  }
-
-  function ensureMenu(){
-    var menu = document.getElementById('logoMenuV14');
-    if(menu) return menu;
-    menu = document.createElement('div');
-    menu.id = 'logoMenuV14';
-    menu.innerHTML =
-      '<button type="button" data-action="edit">編輯</button>' +
-      '<button type="button" data-action="swap">往右移</button>' +
-      '<button type="button" data-action="delete">刪除</button>' +
-      '<button type="button" data-action="round">加圓角</button>';
-    document.body.appendChild(menu);
-    menu.addEventListener('mousedown', function(e){ e.stopPropagation(); }, true);
-    menu.addEventListener('click', function(e){
-      var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
-      if(!btn) return;
-      e.preventDefault(); e.stopPropagation();
-      runAction(btn.dataset.action);
-      closeMenu();
-    }, true);
-    return menu;
-  }
-
-  function updateMenu(){
-    var menu = ensureMenu();
-    var swapBtn = menu.querySelector('[data-action="swap"]');
-    if(swapBtn) swapBtn.hidden = !(ctx && ctx.showSwap);
-    var roundBtn = menu.querySelector('[data-action="round"]');
-    if(roundBtn){
-      roundBtn.textContent = (ctx && ctx.img && ctx.img.dataset.bnLogoRound === '1') ? '取消圓角' : '加圓角';
-    }
-  }
-
-  function openMenu(wrap, img, trigger, opts){
-    ctx = { wrap:wrap, img:img, opts:opts||{}, showSwap:!!(opts&&opts.showSwap) };
-    var menu = ensureMenu();
-    updateMenu();
-    var rect = trigger.getBoundingClientRect();
-    menu.style.left = Math.max(8, Math.round(rect.right - 118)) + 'px';
-    menu.style.top  = Math.max(8, Math.round(rect.bottom + 6)) + 'px';
-    menu.classList.add('show');
-  }
-
-  function runAction(action){
-    if(!ctx || !ctx.img) return;
-    var img = ctx.img, opts = ctx.opts||{};
-    if(action === 'edit'){
-      /* 開啟 CropperJS 裁切，完成後回呼 opts.onEdit */
-      openCropEditor(img.src, function(newSrc){
-        if(!newSrc) return;
-        img.src = newSrc;
-        if(typeof opts.onEdit === 'function') opts.onEdit(img, newSrc);
-      });
-    } else if(action === 'swap'){
-      if(typeof opts.onSwap === 'function') opts.onSwap(img);
-    } else if(action === 'delete'){
-      if(typeof opts.onDelete === 'function') opts.onDelete(img);
-    } else if(action === 'round'){
-      var isRound = ctx.img.dataset.bnLogoRound === '1';
-      ctx.img.dataset.bnLogoRound = isRound ? '' : '1';
-      ctx.img.style.borderRadius = isRound ? '' : '50%';
-      updateMenu();
-      if(typeof opts.onRound === 'function') opts.onRound(img, !isRound);
-    }
-  }
 
   /* ── CropperJS 裁切 ── */
   function destroyCropper(){
@@ -416,7 +319,7 @@
   }
 
   function openCropEditor(src, onDone){
-    injectCSS();
+    injectCropperCSS();
     injectHTML();
     _cropDone = onDone || null;
     loadCropper(function(){
@@ -438,7 +341,6 @@
       if (padsEl)   _setSegActive(padsEl,   padsEl.querySelector('button[data-pad="0"]'));
       if (padNumEl) padNumEl.value = '0';
 
-      activeTarget = null;
       destroyCropper();
       /* 重設 img 讓瀏覽器重新 load */
       cropImg.removeAttribute('src');
@@ -509,48 +411,8 @@
     });
   }
 
-  /* ── 附加觸發器到 logo 縮圖 ── */
-  function attach(imgEl, opts){
-    injectCSS();
-    var wrap = imgEl.parentElement;
-    if(!wrap) return;
-    wrap.style.overflow = 'visible';
-    wrap.style.position = 'relative';
-
-    /* 移除舊觸發器 */
-    var old = wrap.querySelector('.logo-v14-trigger');
-    if(old) old.remove();
-
-    var trigger = document.createElement('div');
-    trigger.className = 'logo-v14-trigger';
-    trigger.textContent = '✎';
-    trigger.title = 'Logo 功能';
-    wrap.appendChild(trigger);
-
-    trigger.style.display = imgEl.getAttribute('src') ? 'flex' : 'none';
-
-    trigger.addEventListener('click', function(e){
-      e.preventDefault(); e.stopPropagation();
-      document.addEventListener('click', closeMenu, { once:true });
-      openMenu(wrap, imgEl, trigger, opts||{});
-    }, true);
-
-    /* src 變化時更新顯示 */
-    var obs = new MutationObserver(function(){
-      trigger.style.display = imgEl.getAttribute('src') ? 'flex' : 'none';
-    });
-    obs.observe(imgEl, { attributes:true, attributeFilter:['src'] });
-  }
-
-  /* ── 關閉 menu 點外部 ── */
-  document.addEventListener('click', function(e){
-    var menu = document.getElementById('logoMenuV14');
-    if(menu && !menu.contains(e.target)) closeMenu();
-  });
-
   /* ── 公開 API ── */
   global.BNLogoMenu = {
-    attach: attach,
     openCropEditor: openCropEditor
   };
 
