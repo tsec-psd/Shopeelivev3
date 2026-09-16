@@ -3027,7 +3027,12 @@
   var _dollarExemptSet = {};   /* {className: true} */
 
   /* ── 字數計算（中文1字，英數0.5字） ── */
-  var CHAR_LIMITS = { '品牌名':9, '主標':8, '副標':7, '日期':14, '購物專家':20 };
+  /* ★ 2026-09：'購物專家' 已移出此表——依需求「先不設限制字數」。
+     原本 20 units 的上限只作用於「畫布上直接雙擊文字編輯」（enforceLimit 會直接截字），
+     側欄輸入框的 bn-text 路徑本來就不檢查，兩邊不一致。表裡沒有 key 時
+     updateCharCounter / showCounter / enforceLimit 都會 early return，不限字也不顯示字數。
+     若日後要恢復，把 '購物專家':N 加回即可。 */
+  var CHAR_LIMITS = { '品牌名':9, '主標':8, '副標':7, '日期':14 };
 
   function calcUnits(text){
     var units = 0;
