@@ -57,7 +57,7 @@
 }
 .日期 {
   font-size: 34.661px;
-  font-family: "ShopeeNotoSans (content)";
+  font-family: "ShopeeNotoSans (content)", "Noto Sans TC", "Noto Sans CJK TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   color: rgb(35, 85, 141);
   line-height: 1.2;
   text-align: left;
@@ -69,7 +69,7 @@
 }
 .主標 {
   font-size: 48px;
-  font-family: "ShopeeNotoSans (content)";
+  font-family: "ShopeeNotoSans (content)", "Noto Sans TC", "Noto Sans CJK TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   color: rgb(34, 85, 142);
   line-height: 1.2;
   text-align: left;
@@ -81,7 +81,7 @@
 }
 .副標 {
   font-size: 83.664px;
-  font-family: "ShopeeNotoSans (content)";
+  font-family: "ShopeeNotoSans (content)", "Noto Sans TC", "Noto Sans CJK TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   color: rgb(32, 132, 244);
   font-weight: bold;
   line-height: 1.2;
@@ -95,7 +95,7 @@
 /* ★ 修正：class 從 .購物專家___緯倫 改為 .購物專家 */
 .購物專家 {
   font-size: 39.73px;
-  font-family: "ShopeeNotoSans (content)";
+  font-family: "ShopeeNotoSans (content)", "Noto Sans TC", "Noto Sans CJK TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   color: rgb(255, 255, 255);
   line-height: 1.2;
   text-align: right;
