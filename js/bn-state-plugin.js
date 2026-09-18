@@ -588,6 +588,168 @@
   }
 
   /* ══════════════════════════════════════
+     2-0. 版位身分的跨機器對應（★ 2026-09）
+     ────────────────────────────────────────────────────────────────────
+     問題:版位 id 是 `Date.now() + changed`(bn.html:1140),在每台電腦
+     「第一次掃描」的那一瞬間各自發號,並只存在該機的
+     localStorage['bn-layouts']。js/index.js 只有檔名清單、沒有 id。
+     於是所有「以版位 id 為鍵」的資料都無法跨機器,而快照裡剛好有四處:
+       ① full.products[].layouts{}  ② full.persons[].layouts{}
+       ③ checked{}                  ④ full.sbd.kvTransformPerId /
+                                       kvManuallyAdjusted
+       ⑤ full.inputs[].id = '#layout-cb-<id>'
+     症狀(換機器上傳暫存):
+       · _bnBuildProdAddMsg 取 p.layouts[lid] 落空 → 該函式【刻意】不退回
+         頂層欄位(退回=攤平),於是送出 userMoved:false 且不帶座標
+         → layout-runtime 走自動構圖 → 商品/人物位置與旋轉全部重置成
+           構圖預設,而不是使用者存檔時的手調結果。
+       · saveChecked 的 `if(c[l.id]!==undefined)` 整批落空 → 勾選全回預設。
+     修法:不動 l.id、也不動那個跨 4 檔案的 per-版位協定,只在 JSON 的
+     進出口做一層翻譯 —— 存檔時附上 id→檔名 對應表(layoutMap)與版位
+     registry(layoutRegistry),讀檔時翻譯回本機 id。檔名才是跨機器穩定
+     的身分(同一份部署,js/index.js 對所有人都一樣)。
+     刻意不升版號:layoutMap / layoutRegistry 都是可選欄位,舊版編輯器
+     讀到會直接忽略,行為與今天完全相同。
+  ══════════════════════════════════════ */
+
+  function _bnLocalLayouts(){
+    try { return (typeof global.loadLayouts === 'function') ? (global.loadLayouts() || []) : []; }
+    catch(e){ return []; }
+  }
+
+  /* 存檔用:本機 id → 檔名 */
+  function buildLayoutMap(){
+    var m = {};
+    _bnLocalLayouts().forEach(function(l){ if (l && l.file) m[l.id] = l.file; });
+    return m;
+  }
+
+  /* 存檔用:版位 registry。enabled/w/h 原本只存在各機 localStorage,
+     不帶走的話「同一份暫存在不同電腦看到的版位集合與畫布尺寸」就會不同。
+     刻意只存 file/enabled/w/h ——【不存 id】,因為 id 正是不可攜的那個東西。 */
+  function buildLayoutRegistry(){
+    return _bnLocalLayouts().map(function(l){
+      return { file: l.file, enabled: l.enabled !== false, w: l.w || 0, h: l.h || 0 };
+    });
+  }
+
+  /* 讀檔用:把 state 內所有他機版位 id 原地改寫成本機 id。
+     回傳 true 表示「有做過翻譯」。 */
+  function remapLayoutIds(state){
+    var locals = _bnLocalLayouts();
+    if (!locals.length) return false;
+    var f = state.full || {};
+
+    /* ── 1. 收集快照裡用到的所有舊 id ── */
+    var seen = {};
+    function eat(o){
+      if (!o || typeof o !== 'object') return;
+      Object.keys(o).forEach(function(k){ if (/^\d+$/.test(k)) seen[k] = 1; });
+    }
+    eat(state.checked);
+    (f.products || []).forEach(function(p){ if (p) eat(p.layouts); });
+    (f.persons  || []).forEach(function(p){ if (p) eat(p.layouts); });
+    if (f.sbd) { eat(f.sbd.kvTransformPerId); eat(f.sbd.kvManuallyAdjusted); }
+    (f.inputs || []).forEach(function(it){
+      var m = it && /^#layout-cb-(\d+)$/.exec(it.id || '');
+      if (m) seen[m[1]] = 1;
+    });
+    var oldIds = Object.keys(seen);
+    if (!oldIds.length) return false;
+
+    /* ── 2. 建立 舊id → 本機id ── */
+    var fileToLocal = {};
+    locals.forEach(function(l){ if (l && l.file) fileToLocal[l.file] = l.id; });
+
+    var trans = {}, exact = false, missing = 0;
+
+    if (state.layoutMap) {
+      oldIds.forEach(function(oid){
+        var file = state.layoutMap[oid];
+        if (file && fileToLocal[file] !== undefined) trans[oid] = fileToLocal[file];
+        else missing++;   /* 存檔機有、本機沒有的版位:略過,不亂猜 */
+      });
+      exact = true;
+    } else if (oldIds.length === locals.length) {
+      /* 舊暫存檔沒有對應表。id 是 `Date.now() + changed` 依 BN_LAYOUTS 的
+         迭代順序遞增發號,所以「舊 id 升冪」對「registry 的排列順序」是
+         唯一合理的推測(registry 也是照 BN_LAYOUTS 順序 push 的)。
+         只有在數量完全一致時才敢套 —— 語義同 bn.html restoreInputs 的
+         seqSafe:寧可「這一項不還原」,也不要「還原到錯的版位上」。
+         註:若存檔機當初是分次掃描(id 不連號、跨多個時間戳基準),這個
+         推測可能錯位,所以下面一定要提示使用者自行確認。 */
+      oldIds.slice().sort(function(a, b){ return a - b; }).forEach(function(oid, i){
+        if (locals[i]) trans[oid] = locals[i].id;
+      });
+    } else {
+      console.warn('[BNState] 暫存檔無 layoutMap,且版位數量不符(檔案 ' +
+        oldIds.length + ' / 本機 ' + locals.length + '),放棄 per-版位位置還原');
+      showToast('此暫存檔版位資料無法對應本機（版位數量不符），位置將回到構圖預設', 'err', 6000);
+      return false;
+    }
+
+    /* 全部對不上就不動:維持「寧可不還原」的語義,也避免無謂地重建物件 */
+    if (!Object.keys(trans).length) return false;
+
+    /* ── 3. 套用 ── */
+    function remap(o){
+      if (!o || typeof o !== 'object') return o;
+      var out = {};
+      Object.keys(o).forEach(function(k){
+        out[(trans[k] !== undefined) ? trans[k] : k] = o[k];
+      });
+      return out;
+    }
+    if (state.checked) state.checked = remap(state.checked);
+    (f.products || []).forEach(function(p){ if (p && p.layouts) p.layouts = remap(p.layouts); });
+    (f.persons  || []).forEach(function(p){ if (p && p.layouts) p.layouts = remap(p.layouts); });
+    if (f.sbd) {
+      if (f.sbd.kvTransformPerId)   f.sbd.kvTransformPerId   = remap(f.sbd.kvTransformPerId);
+      if (f.sbd.kvManuallyAdjusted) f.sbd.kvManuallyAdjusted = remap(f.sbd.kvManuallyAdjusted);
+    }
+    (f.inputs || []).forEach(function(it){
+      var m = it && /^#layout-cb-(\d+)$/.exec(it.id || '');
+      if (m && trans[m[1]] !== undefined) it.id = '#layout-cb-' + trans[m[1]];
+    });
+
+    if (!exact) {
+      showToast('舊版暫存檔：版位對應以順序推測，請確認各版位位置是否正確', '', 6000);
+    } else if (missing) {
+      showToast('此暫存檔有 ' + missing + ' 個版位在本機不存在，已略過', '', 5000);
+    }
+    console.log('[BNState] 版位 id 已重映射（' + (exact ? 'layoutMap' : '順序推測') + '）:', trans);
+    return true;
+  }
+
+  /* 讀檔用:以【檔名】比對回填本機 registry 的 enabled/w/h,
+     讓同一份暫存在任何電腦看到的版位集合與畫布尺寸都一致。
+     絕不寫入 id —— 本機 id 必須維持本機原值,否則 iframe / checked 全亂。 */
+  function applyLayoutRegistry(reg){
+    if (!Array.isArray(reg) || !reg.length) return false;
+    if (typeof global.saveLayouts !== 'function') return false;
+    var locals = _bnLocalLayouts();
+    if (!locals.length) return false;
+
+    var byFile = {};
+    reg.forEach(function(r){ if (r && r.file) byFile[r.file] = r; });
+
+    var changed = false;
+    locals.forEach(function(l){
+      var r = byFile[l.file];
+      if (!r) return;
+      if (l.enabled !== r.enabled) { l.enabled = r.enabled; changed = true; }
+      /* 尺寸:只在本機還沒探測到(0)時才採用檔案值。本機探測成功的值
+         才是這台瀏覽器實際算出來的畫布尺寸,不該被別台的值蓋掉。 */
+      if ((!l.w || !l.h) && r.w && r.h) { l.w = r.w; l.h = r.h; changed = true; }
+    });
+    if (changed) {
+      global.saveLayouts(locals);
+      if (typeof global.renderAdmin === 'function') global.renderAdmin();
+    }
+    return changed;
+  }
+
+  /* ══════════════════════════════════════
      2. 本機暫存
   ══════════════════════════════════════ */
   function collectState(){
@@ -606,6 +768,13 @@
         full: full,
         workorderMeta: global._bnWorkorderMeta || null,
         checked: global.loadChecked ? global.loadChecked() : {},
+        /* ★ 2026-09 跨機器可攜性（詳見本檔 §2-0）:
+           full.products[].layouts / full.persons[].layouts / checked /
+           full.sbd.kvTransformPerId / full.inputs 的 '#layout-cb-<id>'
+           全都以「本機才有意義的版位 id」當鍵,不附對應表的話,這份 JSON
+           換一台電腦上傳就會整批落空、位置回到構圖預設。 */
+        layoutMap: buildLayoutMap(),            /* id → 檔名 */
+        layoutRegistry: buildLayoutRegistry(),  /* 檔名 + enabled/w/h */
       };
     }
 
@@ -632,6 +801,10 @@
           sizeScale:p.sizeScale||1,position:p.position||0,zOrder:p.zOrder||0};
       }),
       checked: global.loadChecked ? global.loadChecked() : {},
+      /* ★ 2026-09:v1 只有 checked 是以版位 id 為鍵(products/persons 這版
+         還沒有 per-版位 layouts),但一樣需要對應表才能跨機器還原勾選。 */
+      layoutMap: buildLayoutMap(),
+      layoutRegistry: buildLayoutRegistry(),
     };
   }
 
@@ -642,6 +815,20 @@
        （帶 rebroadcastRetry：因為上傳暫存時 iframe 可能還沒 ready，
        需要延遲重播構圖/素材，詳見 bn.html 內的註記） */
     if (state.version === 2 && state.full) {
+      /* ★ 2026-09 跨機器還原（詳見本檔 §2-0）。這兩步【必須】排在
+         saveChecked / renderChecks / renderPreviews / _bnRestoreFullState
+         之前,順序也不能對調:
+           ① applyLayoutRegistry:先把 enabled/尺寸補成存檔時的樣子 ——
+              renderChecks() 會用 l.enabled 過濾,renderPreviews() 才會
+              生出正確的那批 iframe。
+           ② remapLayoutIds:把 state 內的他機版位 id 翻成本機 id ——
+              必須在 saveChecked(state.checked) 讀 state.checked 之前、
+              也在 _bnRestoreFullState 讀 full.products/persons/sbd/inputs
+              之前完成,否則那些 map 的鍵全部對不上,商品與人物會被重置
+              成構圖預設(這正是「同一份暫存在三台電腦長不一樣」的主因)。 */
+      var _regChanged = applyLayoutRegistry(state.layoutRegistry);
+      remapLayoutIds(state);
+
       /* ★ 關鍵順序修正：「哪些版位有勾選、要顯示預覽」必須最先還原。
          如果使用者是「剛整理完頁面（一個版位都沒勾）就上傳暫存」，
          這時畫面上根本沒有任何 iframe 存在，構圖/商品/人物的廣播
@@ -650,6 +837,13 @@
          先勾選、把預覽 iframe 生出來，構圖廣播才有東西可以接收。 */
       if (state.checked && typeof global.saveChecked === 'function') {
         global.saveChecked(state.checked);
+        if (typeof global.renderChecks === 'function') global.renderChecks();
+        if (typeof global.renderPreviews === 'function') global.renderPreviews();
+      } else if (_regChanged) {
+        /* ★ 2026-09:上面那個 if 沒進來(極舊的檔案沒有 checked 欄位),但
+           applyLayoutRegistry 已經改過 enabled —— 若不重畫,啟用/停用的
+           變更只會留在 localStorage,畫面上的版位清單與預覽 iframe 仍是
+           舊的一批,接著的廣播就會打到錯的(或不存在的)iframe。 */
         if (typeof global.renderChecks === 'function') global.renderChecks();
         if (typeof global.renderPreviews === 'function') global.renderPreviews();
       }
@@ -676,6 +870,10 @@
 
     /* version 1：舊版簡化快照相容處理（例如使用者上傳的是更早期下載的暫存檔） */
     if (state.version === 1) {
+      /* ★ 2026-09:同 version 2,先把版位身分翻成本機 id(這版只影響
+         state.checked),否則換機器上傳時勾選狀態會整批落空。 */
+      applyLayoutRegistry(state.layoutRegistry);
+      remapLayoutIds(state);
       if(state.texts){
         ['brand','main','sub','date','host'].forEach(function(k){
           var el=document.getElementById('txt-'+k);

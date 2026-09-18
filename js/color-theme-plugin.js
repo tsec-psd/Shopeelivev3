@@ -516,6 +516,29 @@
       global.broadcastColors = function () {
         const cs = global.colorState;
 
+        /* ★ 2026-09 修正「上傳暫存 / Undo 後文字顏色回不來」
+           ────────────────────────────────────────────────────────────
+           _ctAutoGenBg 是本外掛的內部變數,【沒有】存進快照,所以每次
+           頁面重新載入都是 null。於是還原流程走到這裡時:
+             cs.canvasBg(例如 #0184FF) !== _ctAutoGenBg(null) → 成立
+           hook 就誤判成「背景色剛剛被改」,拿 canvasBg 重新生成整套配色,
+           把剛從快照還原好的 mainText/subText/dateText/brandText 蓋掉,
+           還順手 renderColorPickers() 讓側欄也顯示錯的顏色。
+           實測:存檔 mainText #f0d3ff / subText #feef4d,還原後變成
+           generateTheme('#0184FF') 的 #0c3964 / #052542。
+           (hostText 不在覆寫清單、barBg 有 barBgLocked 保護,所以那兩個
+            看起來正常 —— 這正是「只有部分文字色跑掉」的原因。)
+
+           還原中的 colorState 就是權威值(快照存的是當時實際生效的顏色),
+           重新生成【永遠】是錯的。這裡順便把 _ctAutoGenBg 對齊成還原後
+           的 canvasBg,讓還原「之後」的 broadcastColors(rebroadcastOnce、
+           iframe ready 補播)也不會再落入生成分支。
+           這同時修掉 Undo:「改背景色 → Ctrl+Z 回到舊背景色」原本也會
+           因為 canvasBg !== _ctAutoGenBg 而重新生成、洗掉手調的文字色。 */
+        if (global._bnIsRestoringHistory && cs && cs.canvasBg) {
+          _ctAutoGenBg = cs.canvasBg;
+        }
+
         /* ① canvasBg 非預設值，且與上次生成不同 → 重新生成全套配色 */
         if (cs && cs.canvasBg &&
             cs.canvasBg.toLowerCase() !== _DEFAULT_BG.toLowerCase() &&
@@ -572,10 +595,24 @@
       const f = document.getElementById('iframe-' + id);
       if (f) {
         setTimeout(() => {
+          /* ★ 2026-09:原本這裡一律送「剛生成的」p.barBg/p.shadowColor,
+             完全無視 colorState —— 而 colorState 才是把 barBgLocked /
+             shadowLocked(使用者親手挑過就上鎖)算進去後的結果。
+             上傳暫存時所有 iframe 都是重建的,必定走到這條路,且本函式
+             帶 300ms setTimeout,常常比 rebroadcastOnce() 的正確廣播
+             還晚抵達 → 後到的自動值覆蓋先到的正確值,於是「主播名 Bar
+             與商品陰影的顏色也回不來」。改為以 colorState 優先,只在
+             該欄位從未設定過時才退回自動生成值。 */
+          const ext = {
+            barBg:       cs.barBg       || p.barBg,
+            barText:     cs.barText     || p.barText,
+            shadowColor: cs.shadowColor || p.shadowColor,
+          };
+          ext.shadowRgba = cs.shadowColor ? hexToRgba(cs.shadowColor, .22) : p.shadowRgba;
           try { f.contentWindow.postMessage({
             type: 'bn-color-ext',
-            barBg: p.barBg, barText: p.barText,
-            shadowColor: p.shadowColor, shadowRgba: p.shadowRgba,
+            barBg: ext.barBg, barText: ext.barText,
+            shadowColor: ext.shadowColor, shadowRgba: ext.shadowRgba,
           }, '*'); } catch (_) {}
           _broadcastLogoToId(id, _pickLogoSrc(cs.canvasBg));
         }, 300);
