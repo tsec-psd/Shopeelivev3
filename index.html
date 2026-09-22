@@ -14,9 +14,25 @@
   --text: #e8e8e8; --text2: #a0a0a0; --text3: #666666;
   --green: #2ea043; --red: #da3633; --yellow: #e3a008;
   --radius: 6px;
+  /* 統一 focus 樣式：所有互動元素共用同一個 token，不再各自為政 */
+  --focus-ring: var(--accent2);
+  /* 具名 z-index 分級，取代散落各處的 9999 / 100090 / 100095 等隨意數字 */
+  --z-tooltip: 400;
+  --z-panel: 500;
+  --z-toast: 600;
+  --z-modal: 700;
 }
+/* 統一鍵盤 focus 提示：僅在鍵盤導覽時顯示，滑鼠點擊不顯示 */
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 html, body { height: 100%; background: var(--bg0); color: var(--text);
   font-family: "Segoe UI","PingFang TC",Arial,sans-serif; font-size: 13px; }
+
+/* 內建圖示（inline SVG sprite，取代 emoji）：尺寸跟隨所在元素的字級，
+   顏色跟隨所在元素的 color（currentColor），主題色一律吃 CSS 變數。 */
+.icon {
+  width: 1em; height: 1em; flex-shrink: 0;
+  vertical-align: -0.15em;
+}
 
 /* ════════════════════════════════
    Tab bar
@@ -31,6 +47,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text2);
   border: 1px solid transparent; border-bottom: none;
   transition: color .15s, background .15s;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .tab:hover { color: var(--text); background: var(--bg2); }
 .tab.active { color: var(--text); background: var(--bg0); border-color: var(--border); }
@@ -54,7 +71,8 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   background: var(--bg1); border: 1px solid var(--border);
   border-radius: 8px; padding: 20px; margin-bottom: 16px;
 }
-.card h3 { font-size: 13px; font-weight: 700; margin-bottom: 14px; color: var(--accent2); }
+.card h3 { font-size: 13px; font-weight: 700; margin-bottom: 14px; color: var(--accent2);
+  display: flex; align-items: center; gap: 6px; }
 
 .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-group { display: flex; flex-direction: column; gap: 4px; }
@@ -66,17 +84,31 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   transition: border-color .15s;
 }
 .field-group input:focus, .field-group select:focus { border-color: var(--accent); }
+.field-group input:focus-visible, .field-group select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .field-group input { width: 200px; }
 
 .btn {
   padding: 7px 16px; border-radius: var(--radius); border: none;
   font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity .15s;
+  display: inline-flex; align-items: center; gap: 6px;
 }
 .btn:hover { opacity: .85; }
 .btn-primary { background: var(--accent); color: #fff; }
 .btn-danger  { background: var(--red);    color: #fff; padding: 4px 10px; font-size: 11px; }
 .btn-sm      { padding: 4px 10px; font-size: 11px; }
 .btn-success { background: var(--green);  color: #fff; }
+
+/* window._bnConfirm() 動態產生的對話框按鈕（原本沒有對應的 class 定義，
+   會直接吃瀏覽器預設按鈕樣式，跟暗色對話框視覺不一致——這裡補上）。 */
+.bn-btn-skip, .bn-btn-confirm {
+  padding: 7px 16px; border-radius: var(--radius); border: none;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: opacity .15s, filter .15s;
+}
+.bn-btn-skip { background: var(--bg3); color: var(--text); }
+.bn-btn-skip:hover { opacity: .85; }
+.bn-btn-confirm { background: var(--accent); color: #fff; }
+.bn-btn-confirm:hover { filter: brightness(1.08); }
 
 /* 排版列表 */
 #layout-list { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
@@ -125,6 +157,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   border-bottom: 1px solid var(--border);
   font-size: 11px; font-weight: 700; letter-spacing: 1px;
   color: var(--accent2); text-transform: uppercase;
+  display: flex; align-items: center; gap: 6px;
 }
 #sidebar-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px 0; }
 #sidebar-scroll::-webkit-scrollbar { width: 3px; }
@@ -143,6 +176,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   outline: none; transition: border-color .15s;
 }
 .s-field input:focus { border-color: var(--accent); }
+.s-field input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .s-field-inline { padding: 4px 14px; margin-bottom: 4px; }
 .s-field-inline label { display: block; font-size: 10px; color: var(--text2); margin-bottom: 3px; }
 .s-field-row {
@@ -154,6 +188,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   outline: none; transition: border-color .15s; min-width: 0;
 }
 .s-field-row input:focus { border-color: var(--accent); }
+.s-field-row input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 /* 排版勾選 */
 .layout-check-item {
@@ -179,7 +214,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
 #preview-empty {
   margin: auto; text-align: center; color: var(--text3); font-size: 13px;
 }
-#preview-empty .icon { font-size: 36px; margin-bottom: 8px; }
+#preview-empty .icon { width: 36px; height: 36px; margin-bottom: 8px; color: var(--text3); }
 
 /* 單一排版預覽 */
 .preview-block {
@@ -222,7 +257,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   display: none; position: fixed;
   background: #1e1e1e; border: 1px solid #3d3d3d;
   border-radius: 10px; padding: 12px 14px;
-  z-index: 9999; width: 234px;
+  z-index: var(--z-panel); width: 234px;
   box-shadow: 0 8px 32px rgba(0,0,0,.7);
 }
 #cp-panel.open { display: block; }
@@ -241,6 +276,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   transition: border-color .12s;
 }
 #cp-hex-input:focus { border-color: #ee4d2d; background: #323232; }
+#cp-hex-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 #cp-native {
   width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
   border: 1px solid rgba(255,255,255,.15); cursor: pointer;
@@ -309,12 +345,53 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
 </style>
 </head>
 <body>
+
+<!-- 內建圖示集（原生 inline SVG，取代原本的 emoji 圖示，無外部依賴） -->
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <symbol id="icon-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>
+  </symbol>
+  <symbol id="icon-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="13" rx="2"/>
+    <path d="M8 21h8M12 17v4"/>
+  </symbol>
+  <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>
+  </symbol>
+  <symbol id="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 0 1 15.3-6.4M21 12a9 9 0 0 1-15.3 6.4"/>
+    <path d="M18.5 3v4.5H14M5.5 21v-4.5H10"/>
+  </symbol>
+  <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 6h13M8 12h13M8 18h13"/>
+    <circle cx="3.5" cy="6" r="1.2" fill="currentColor" stroke="none"/>
+    <circle cx="3.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+    <circle cx="3.5" cy="18" r="1.2" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="icon-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="16" rx="2"/>
+    <circle cx="8.5" cy="9.5" r="1.5" fill="currentColor" stroke="none"/>
+    <path d="M21 16l-5.5-5.5a1.5 1.5 0 0 0-2.1 0L5 19"/>
+  </symbol>
+  <symbol id="icon-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6h6M14 6h6M4 12h11M19 12h1M4 18h3M11 18h9"/>
+    <circle cx="12" cy="6" r="2"/>
+    <circle cx="17" cy="12" r="2"/>
+    <circle cx="8" cy="18" r="2"/>
+  </symbol>
+  <symbol id="icon-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 16V4M8 8l4-4 4 4"/>
+    <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+  </symbol>
+</svg>
+
 <div id="app">
 
   <!-- Tab Bar -->
-  <div id="tab-bar">
-    <div class="tab" onclick="switchTab('admin')">⚙️ 後台</div>
-    <div class="tab active" onclick="switchTab('frontend')">🖥️ 前台預覽</div>
+  <div id="tab-bar" role="tablist">
+    <div class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('admin')" onkeydown="_bnA11yActivate(event)"><svg class="icon" aria-hidden="true"><use href="#icon-gear"></use></svg> 後台</div>
+    <div class="tab active" role="tab" tabindex="0" aria-selected="true" onclick="switchTab('frontend')" onkeydown="_bnA11yActivate(event)"><svg class="icon" aria-hidden="true"><use href="#icon-monitor"></use></svg> 前台預覽</div>
     <div id="tab-title">BN 編輯器</div>
   </div>
 
@@ -326,13 +403,13 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
     <p class="sub">從 <code>js/index.js</code> 自動掃描排版清單，無需手動新增。點「重新掃描」即可同步最新清單。</p>
 
     <div class="card">
-      <h3>📡 自動掃描 html/ 資料夾</h3>
+      <h3><svg class="icon" aria-hidden="true"><use href="#icon-folder"></use></svg> 自動掃描 html/ 資料夾</h3>
       <p style="font-size:12px;color:var(--text2);margin-bottom:14px">
         從 <code>js/index.js</code> 讀取排版清單。
         每次新增或刪除排版 HTML 後，更新該檔案即可。
       </p>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-primary" onclick="scanLayouts()">🔄 重新掃描</button>
+        <button class="btn btn-primary" onclick="scanLayouts()"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg> 重新掃描</button>
         <span id="scan-status" style="font-size:11px;color:var(--text3)"></span>
       </div>
       <div style="margin-top:14px">
@@ -344,20 +421,20 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
     </div>
 
     <div class="card">
-      <h3>📋 排版清單</h3>
+      <h3><svg class="icon" aria-hidden="true"><use href="#icon-list"></use></svg> 排版清單</h3>
       <div id="layout-list">
         <div class="empty-hint">點「重新掃描」載入排版</div>
       </div>
     </div>
 
     <div class="card">
-      <h3>🖼 底圖核對</h3>
+      <h3><svg class="icon" aria-hidden="true"><use href="#icon-image"></use></svg> 底圖核對</h3>
       <p style="font-size:12px;color:var(--text2);margin-bottom:12px">
         勾選後在前台疊加底圖（50% 透明），方便核對。<br>
         底圖放在同層 <code>bn測底圖/</code> 資料夾。
       </p>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-        <button class="btn" onclick="scanBgFiles()">🔄 掃描底圖資料夾</button>
+        <button class="btn" onclick="scanBgFiles()"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg> 掃描底圖資料夾</button>
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer">
           <input type="checkbox" id="bg-all-check" onchange="toggleAllBgCheckers(this.checked)">
           全部顯示
@@ -387,14 +464,14 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
     <!-- 中間：畫版預覽 -->
     <div id="preview-area">
       <div id="preview-empty">
-        <div class="icon">🖼</div>
+        <svg class="icon" aria-hidden="true"><use href="#icon-image"></use></svg>
         <div>請在左側勾選版位</div>
       </div>
     </div>
 
     <!-- 右側：工具列 -->
     <div id="sidebar">
-      <div id="sidebar-head">🎛 工具列</div>
+      <div id="sidebar-head"><svg class="icon" aria-hidden="true"><use href="#icon-sliders"></use></svg> 工具列</div>
       <div id="sidebar-scroll">
 
         <!-- ══ 工單上傳 ══ -->
@@ -407,7 +484,7 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
                       color:var(--text3);font-size:11px;position:relative;">
             <input type="file" id="wo-file-input" accept=".xlsx,.xls"
                    style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;">
-            📊 點擊或拖曳上傳工單 .xlsx
+            <svg class="icon" aria-hidden="true"><use href="#icon-upload"></use></svg> 點擊或拖曳上傳工單 .xlsx
           </div>
           <div id="wo-sheet-wrap" style="display:none;margin-top:6px;">
             <label style="display:block;font-size:10px;color:var(--text2);margin-bottom:3px;">選擇 Sheet</label>
@@ -427,28 +504,28 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
           <label>主標</label>
           <div class="s-field-row">
             <input type="text" id="txt-main" placeholder="主標文字" value="滿$200享9折" oninput="broadcastText()">
-            <span class="char-count-badge" id="badge-主標"></span><div class="color-dot" id="dot-mainText" title="主標文字色"></div>
+            <span class="char-count-badge" id="badge-主標"></span><div class="color-dot" id="dot-mainText" title="主標文字色" role="button" tabindex="0" aria-label="主標文字色" onkeydown="_bnA11yActivate(event)"></div>
           </div>
         </div>
         <div class="s-field-inline">
           <label>副標</label>
           <div class="s-field-row">
             <input type="text" id="txt-sub" placeholder="副標文字" value="副標$500折起" oninput="broadcastText()">
-            <span class="char-count-badge" id="badge-副標"></span><div class="color-dot" id="dot-subText" title="副標文字色"></div>
+            <span class="char-count-badge" id="badge-副標"></span><div class="color-dot" id="dot-subText" title="副標文字色" role="button" tabindex="0" aria-label="副標文字色" onkeydown="_bnA11yActivate(event)"></div>
           </div>
         </div>
         <div class="s-field-inline">
           <label>日期</label>
           <div class="s-field-row">
             <input type="text" id="txt-date" placeholder="日期文字" value="5/18 12:00" oninput="broadcastText()">
-            <span class="char-count-badge" id="badge-日期"></span><div class="color-dot" id="dot-dateText" title="日期文字色"></div>
+            <span class="char-count-badge" id="badge-日期"></span><div class="color-dot" id="dot-dateText" title="日期文字色" role="button" tabindex="0" aria-label="日期文字色" onkeydown="_bnA11yActivate(event)"></div>
           </div>
         </div>
         <div class="s-field-inline">
           <label>購物專家</label>
           <div class="s-field-row">
             <input type="text" id="txt-host" placeholder="購物專家｜姓名" value="" oninput="broadcastText()">
-            <span class="char-count-badge" id="badge-購物專家"></span><div class="color-dot" id="dot-hostText" title="購物專家文字色"></div>
+            <span class="char-count-badge" id="badge-購物專家"></span><div class="color-dot" id="dot-hostText" title="購物專家文字色" role="button" tabindex="0" aria-label="購物專家文字色" onkeydown="_bnA11yActivate(event)"></div>
           </div>
         </div>
 
@@ -625,6 +702,9 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
       /* ★ 規格 3.1 新增的 LOGO 白框留白比例。沒存的話 Undo 與「上傳暫存」
          都會把它默默打回預設值。 */
       logoPad:   (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10,
+      /* ★ LOGO 底框顏色（預設白色）。與 logoPad 同理：不存的話 Undo
+         與「上傳暫存」都會把使用者吸來的品牌色默默打回白色。 */
+      logoBgColor: (typeof window._bnLogoBgColor === 'string') ? window._bnLogoBgColor : '#FFFFFF',
       /* ★ SBD 模式（公版/SBD、KV 底圖、全域滑桿、各版位個別調整）由 sbd-plugin.js
          對外開放的 _bnGetSbdState() 提供；該外掛若還沒載入完成則存 null，
          還原時整段跳過，不影響其餘欄位正常還原 */
@@ -737,6 +817,8 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
          注意 logoPad 只影響「之後重新合成白底」時的留白;已烤進 logos[].src
          的白底不需要(也不應該)在這裡重算,因為 state.logos 存的就是當時的成品。 */
       window._bnLogoPad = (typeof state.logoPad === 'number') ? state.logoPad : 0.10;
+      /* 底框顏色同理:舊暫存檔沒有這個欄位 → 退回白色(即舊版行為) */
+      window._bnLogoBgColor = (typeof state.logoBgColor === 'string') ? state.logoBgColor : '#FFFFFF';
       if (typeof window._bnSyncLogoSliders === 'function') window._bnSyncLogoSliders();
 
       // 2. 還原全域資料結構快照
@@ -1008,12 +1090,24 @@ function saveLayouts(arr) {
 ════════════════════════════════════════ */
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(function(t, i) {
-    t.classList.toggle('active', ['admin','frontend'][i] === name);
+    var isActive = ['admin','frontend'][i] === name;
+    t.classList.toggle('active', isActive);
+    t.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
   document.querySelectorAll('.page').forEach(function(p) {
     p.classList.toggle('active', p.id === name);
   });
   if (name === 'frontend') { renderChecks(); setTimeout(applyBgCheckers, 500); }
+}
+
+/* 鍵盤操作：讓用 onclick 綁定行為的自訂控制項（.tab / .toggle-active / .color-dot）
+   在 Enter / 空白鍵時也能觸發，等同滑鼠點擊——這些元素本身不是原生
+   <button>，瀏覽器預設不會處理鍵盤啟動，所以在這裡補上。 */
+function _bnA11yActivate(e) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    e.currentTarget.click();
+  }
 }
 
 /* ════════════════════════════════════════
@@ -1214,7 +1308,9 @@ function renderAdmin() {
   }
   list.innerHTML = layouts.map(function(l) {
     return '<div class="layout-row' + (l.enabled ? ' enabled' : '') + '" id="lr-' + l.id + '">' +
-      '<div class="toggle-active" onclick="toggleEnabled(' + l.id + ')" title="啟用/停用"></div>' +
+      '<div class="toggle-active" onclick="toggleEnabled(' + l.id + ')" title="啟用/停用" ' +
+        'role="switch" tabindex="0" aria-checked="' + (l.enabled ? 'true' : 'false') + '" ' +
+        'aria-label="' + esc(l.name) + ' 啟用/停用" onkeydown="_bnA11yActivate(event)"></div>' +
       '<div class="name">' + esc(l.name) + '</div>' +
       '<div class="file">html/' + esc(l.file) + '</div>' +
       '<div class="size-tag">' + (l.w ? l.w + ' × ' + l.h : '—') + '</div>' +
@@ -1710,7 +1806,11 @@ function renderColorPickers() {
     dot.className = 'color-dot';
     dot.id = 'dot-' + f.key;
     dot.style.background = colorValue(f.key);
+    dot.setAttribute('role', 'button');
+    dot.tabIndex = 0;
+    dot.setAttribute('aria-label', f.label + ' 顏色');
     dot.addEventListener('click', (function(k){ return function(e){ openPanel(k, e); }; })(f.key));
+    dot.addEventListener('keydown', _bnA11yActivate);
     row.appendChild(dot);
 
     /* ★ 跟隨型欄位(目前只有 Bar 跟隨副標色):挑過色會鎖定不再跟隨,
@@ -1884,7 +1984,7 @@ function showBanwordWarningInline(inp, msg){
     el = document.createElement('div');
     el.id = wid;
     el.style.cssText=[
-      'position:absolute;z-index:9999;',
+      'position:absolute;z-index:var(--z-tooltip);',
       'background:#7f1d1d;color:#fca5a5;',
       'font-size:10px;padding:3px 8px;border-radius:5px;',
       'white-space:nowrap;pointer-events:none;',
@@ -2197,7 +2297,7 @@ window._bnToast = function(msg){
     t.textContent = msg;
     t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);'+
       'background:rgba(17,17,17,.92);color:#fff;padding:10px 16px;border-radius:8px;'+
-      'font-size:13px;z-index:100090;box-shadow:0 4px 16px rgba(0,0,0,.25);'+
+      'font-size:13px;z-index:var(--z-toast);box-shadow:0 4px 16px rgba(0,0,0,.25);'+
       'opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw;text-align:center;';
     document.body.appendChild(t);
     requestAnimationFrame(function(){ t.style.opacity = '1'; });
@@ -2218,7 +2318,7 @@ window._bnConfirm = function(message, opts){
   return new Promise(function(resolve){
     var ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);'+
-      '-webkit-backdrop-filter:blur(4px);z-index:100095;display:flex;align-items:center;justify-content:center;'+
+      '-webkit-backdrop-filter:blur(4px);z-index:var(--z-modal);display:flex;align-items:center;justify-content:center;'+
       'opacity:0;transition:opacity .15s;';
     var box = document.createElement('div');
     box.style.cssText = 'background:#1e1e1e;border:1px solid #333;border-radius:14px;width:min(420px,92vw);'+
@@ -2543,6 +2643,8 @@ function collectHistoryState(){
     logos: JSON.parse(JSON.stringify(window._bnLogos || [])),
     compose: window._bnComposePreset ? JSON.parse(JSON.stringify(window._bnComposePreset)) : null,
     logoWhiteBg: !!window._bnLogoWhiteBg,
+    logoPad:     (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10,
+    logoBgColor: (typeof window._bnLogoBgColor === 'string') ? window._bnLogoBgColor : '#FFFFFF',
     shadowAngle: window._bnShadowAngle || 'left'
   };
 }

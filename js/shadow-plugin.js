@@ -18,6 +18,9 @@ window.ShadowPlugin = (function () {
   // 固定死的預設值(不對外開放調整，比照原版)
   var FIXED = {
     soft: 16,
+    softNear: 1,
+    softFar: 25,
+    softSteps: 12,
     fade: 120,
     occlude: 80,
     squash: 0.32
@@ -149,6 +152,98 @@ window.ShadowPlugin = (function () {
     targetCtx.restore();
   }
 
+  /* 將一張已模糊的投影限制在「距離帶」內。
+     帶與帶之間以三角權重交疊，在任意距離上的總權重都是 1，
+     因此可以平滑混合不同 blur 半徑，不會出現一節一節的接縫。 */
+  function applyDistanceBandMask(layerCtx, w, h, ox, oy, tipDx, tipDy, index, count) {
+    var centerT = index / (count - 1);
+    var prevT = Math.max(0, (index - 1) / (count - 1));
+    var nextT = Math.min(1, (index + 1) / (count - 1));
+    var grad;
+
+    layerCtx.save();
+    layerCtx.globalCompositeOperation = 'destination-in';
+
+    if (index === 0) {
+      grad = layerCtx.createLinearGradient(
+        ox, oy,
+        ox + tipDx * nextT, oy + tipDy * nextT
+      );
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+    } else if (index === count - 1) {
+      grad = layerCtx.createLinearGradient(
+        ox + tipDx * prevT, oy + tipDy * prevT,
+        ox + tipDx, oy + tipDy
+      );
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,1)');
+    } else {
+      grad = layerCtx.createLinearGradient(
+        ox + tipDx * prevT, oy + tipDy * prevT,
+        ox + tipDx * nextT, oy + tipDy * nextT
+      );
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop((centerT - prevT) / (nextT - prevT), 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+    }
+
+    layerCtx.fillStyle = grad;
+    layerCtx.fillRect(0, 0, w, h);
+    layerCtx.restore();
+  }
+
+  /* 商品主斜影：靠近接地點保持較清晰，沿投射向量越遠越模糊。
+     先畫一次銳利投影，再將多個 Gaussian blur 版本以距離遮罩混合。
+     Canvas filter 的結果會烘入像素，後續 html2canvas 匯出可正常保留。 */
+  function drawProgressiveShadow(targetCtx, tinted, ox, oy, pw, ph, shear, squash, rotRad) {
+    var w = targetCtx.canvas.width;
+    var h = targetCtx.canvas.height;
+    var base = document.createElement('canvas');
+    base.width = w; base.height = h;
+    var bctx = base.getContext('2d');
+
+    /* 單一銳利投影作為各模糊層共用的來源。 */
+    stampLayer(bctx, tinted, ox, oy, pw, ph, shear, squash, 0, 0.62, 1, rotRad);
+
+    var scratch = document.createElement('canvas');
+    scratch.width = w; scratch.height = h;
+    var sctx = scratch.getContext('2d');
+    var canBlur = typeof sctx.filter !== 'undefined';
+
+    /* 舊環境若不支援 Canvas filter，維持原本三層 stamp 效果。 */
+    if (!canBlur) {
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 1.8, 0.2, 12, rotRad);
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.8, 0.28, 10, rotRad);
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.25, 0.25, 6, rotRad);
+      return;
+    }
+
+    var steps = Math.max(2, FIXED.softSteps);
+    var tipDx = -shear * ph;
+    var tipDy = -squash * ph;
+
+    targetCtx.save();
+    /* 每個距離帶的遮罩權重總和為 1。用 lighter 累加 premultiplied alpha，
+       才能在交疊區維持一致的濃度；若用 multiply 會重複變深而產生層紋。 */
+    targetCtx.globalCompositeOperation = 'lighter';
+    for (var i = 0; i < steps; i++) {
+      var t = i / (steps - 1);
+      /* 二次曲線：前半段維持較小 blur，後半段再加速擴散到原本尾端強度。 */
+      var eased = t * t;
+      var radius = FIXED.softNear + (FIXED.softFar - FIXED.softNear) * eased;
+
+      sctx.clearRect(0, 0, w, h);
+      sctx.globalCompositeOperation = 'source-over';
+      sctx.filter = radius > 0 ? 'blur(' + radius + 'px)' : 'none';
+      sctx.drawImage(base, 0, 0);
+      sctx.filter = 'none';
+      applyDistanceBandMask(sctx, w, h, ox, oy, tipDx, tipDy, i, steps);
+      targetCtx.drawImage(scratch, 0, 0);
+    }
+    targetCtx.restore();
+  }
+
   // 商品貼地陰影(斜切/擠壓/多層 stamp)，state: {x(中心), y(底部), w, h, rot, shadowScaleX, shadowScaleY}
   function drawGroundShadow(ctx, id, state, occluderMask) {
     var p = products[id];
@@ -187,7 +282,9 @@ window.ShadowPlugin = (function () {
     var fadeMul = FIXED.fade / 100;
     var occludeStrength = FIXED.occlude / 100;
     var shear = Math.tan(angle * 0.55);
-    var maxSpread = soft * 1.8;
+    /* Canvas blur 有約 3倍半徑的可見外擴，預留足夠空間，
+       避免遠端大 blur 被離屏 canvas 邊界裁成硬邊。 */
+    var maxSpread = Math.max(soft * 1.8, FIXED.softFar * 3) + 20;
 
     // 光源「中」(angle=0)：只留接地補強陰影，不疊主斜切陰影(直直往下的模糊陰影疊加反而厚重)
     if (opts.presetName === 'top') return;
@@ -201,19 +298,18 @@ window.ShadowPlugin = (function () {
       rh = spw * as + sph * ac;
     }
     var extH = Math.max(sph, rh);
-    var halfW = rw / 2 + Math.abs(shear) * extH + maxSpread * 2 + 20;
+    var halfW = rw / 2 + Math.abs(shear) * extH + maxSpread;
     var tempW = Math.ceil(halfW * 2);
-    var tempH = Math.ceil(extH * squash * 2 + maxSpread * 2 + 40);
+    var projectedH = extH * squash;
+    var tempH = Math.ceil(projectedH + maxSpread * 2);
     var anchorX = halfW;
-    var anchorY = Math.ceil(tempH * 0.5);
+    var anchorY = Math.ceil(maxSpread + projectedH);
 
     var tmp = document.createElement('canvas');
     tmp.width = tempW; tmp.height = tempH;
     var tctx = tmp.getContext('2d');
 
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 1.8, 0.2, 12, rotRad);
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.8, 0.28, 10, rotRad);
-    stampLayer(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, soft * 0.25, 0.25, 6, rotRad);
+    drawProgressiveShadow(tctx, p.tinted, anchorX, anchorY, spw, sph, shear, squash, rotRad);
 
     if (occludeStrength > 0 && occluderMask) {
       tctx.save();
