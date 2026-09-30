@@ -91,10 +91,10 @@
     document.head.appendChild(style);
 
     /* ── 狀態 ── */
-    /* logo 支援最多2張 */
+    /* logo 支援最多3張 */
     window._bnLogos = window._bnLogos || [];   /* [{id,src}] */
     window._bnLogoDataUrl = window._bnLogoDataUrl || null;  /* 向下相容：第一張 */
-    var MAX_LOGOS = 2;
+    var MAX_LOGOS = 3;
     window._bnProducts    = window._bnProducts    || [];
     var MAX_PROD = 2;
     window._bnPersons     = window._bnPersons     || [];
@@ -184,8 +184,9 @@
     /* 底框顏色(白底那層的填色)。預設白色 —— 沒設定過的檔案/舊快照
        行為與過去完全相同。只接受 #RGB / #RRGGBB,其餘一律退回白色,
        免得壞值直接進 canvas 的 fillStyle(那會靜靜地畫成黑色)。 */
-    function _bnLogoBgColorGet(){
-      var c = window._bnLogoBgColor;
+    function _bnLogoBgColorGet(lg){
+      var c = lg && lg.bgColor;
+      if(typeof c !== 'string' || !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim())) c = window._bnLogoBgColor;
       if(typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c.trim())){
         return c.trim().toUpperCase();
       }
@@ -197,7 +198,7 @@
     function _bnLogoRoundOn(lg){ return !!(lg && lg.round) && !window._bnLogoWhiteBg; }
 
     function _bnMakeLogo(id, src){
-      return { id:id, src:src, _origSrc:src, round:false };
+      return { id:id, src:src, _origSrc:src, round:false, bgColor:_bnLogoBgColorGet() };
     }
     /* 裁切結果 → 基底。第一次裁切時才把原圖挪進 srcRaw,
        所以重複裁切永遠留得住「上傳時」的那一張。 */
@@ -216,6 +217,7 @@
       if(!lg._origSrc) lg._origSrc = lg.src || '';   /* v1 舊暫存檔只有 src */
       if(!lg.src)      lg.src      = lg._origSrc;
       lg.round = !!lg.round;
+      lg.bgColor = _bnLogoBgColorGet(lg);
       return lg;
     }
     function _bnNormalizeLogos(){
@@ -284,7 +286,7 @@
 
         /* 圓角矩形鋪滿整個畫布(不再內縮)。顏色可調(側欄「底框顏色」),
            預設白色 —— 這一層是烤進 PNG 的,所以換色要重新合成一次。 */
-        ctx.fillStyle = _bnLogoBgColorGet();
+        ctx.fillStyle = _bnLogoBgColorGet(lg);
         ctx.beginPath();
         ctx.moveTo(r, 0);
         ctx.lineTo(cw - r, 0);
@@ -377,7 +379,7 @@
 
       var sec=document.createElement('div');
       sec.innerHTML=[
-        '<div class="s-section" style="margin-top:14px">廠商 Logo 上傳（最多2張）</div>',
+        '<div class="s-section" style="margin-top:14px">廠商 Logo 上傳（最多3張）</div>',
         '<div class="bn-section">',
         '  <div class="bn-drop" id="bn-logo-drop">',
         '    <input type="file" accept="image/*" multiple id="bn-logo-inp">',
@@ -405,16 +407,6 @@
         '    <span style="flex-shrink:0;">底框粗細</span>',
         '    <input type="range" id="bn-logo-pad" min="0" max="40" step="1" value="10" style="flex:1;min-width:0;">',
         '    <span id="bn-logo-pad-val" style="flex-shrink:0;width:30px;text-align:right;">10%</span>',
-        '  </div>',
-        /* 底框顏色:預設白色。「吸色」從 LOGO 自己的像素取色(見 logo-editor-plugin.js
-           的 openColorPicker),讓底框可以直接吃廠商的品牌色而不必回 PS 對色。 */
-        '  <div id="bn-logo-bg-row" style="display:flex;align-items:center;gap:6px;padding:0 0 6px;font-size:11px;color:var(--text2);">',
-        '    <span style="flex-shrink:0;">底框顏色</span>',
-        '    <input type="color" id="bn-logo-bgcolor" value="#FFFFFF" title="底框顏色" style="width:30px;height:20px;padding:0;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:none;cursor:pointer;flex-shrink:0;">',
-        '    <span id="bn-logo-bgcolor-hex" style="flex-shrink:0;font-family:ui-monospace,Menlo,Consolas,monospace;">#FFFFFF</span>',
-        '    <span style="flex:1;min-width:0;"></span>',
-        '    <button type="button" id="bn-logo-bgcolor-pick" style="flex-shrink:0;padding:2px 7px;font-size:10px;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:transparent;color:var(--text2,#a0a0a0);cursor:pointer;">吸色</button>',
-        '    <button type="button" id="bn-logo-bgcolor-white" title="回復白色" style="flex-shrink:0;padding:2px 6px;font-size:10px;border:1px solid var(--border,#3d3d3d);border-radius:4px;background:transparent;color:var(--text2,#a0a0a0);cursor:pointer;">白</button>',
         '  </div>',
         '  <div class="bn-prod-list" id="bn-logo-list"></div>',
         '</div>',
@@ -464,23 +456,10 @@
         var row = document.getElementById('bn-logo-pad-row');
         if (row) row.style.opacity = on ? '1' : '.4';
 
-        var hex = _bnLogoBgColorGet();
-        var ci  = document.getElementById('bn-logo-bgcolor');
-        var ch  = document.getElementById('bn-logo-bgcolor-hex');
-        var crow= document.getElementById('bn-logo-bg-row');
-        var pick= document.getElementById('bn-logo-bgcolor-pick');
-        if (ci) ci.value = hex.length === 4                     /* #RGB → #RRGGBB:input[type=color] 只吃 6 位 */
-          ? '#' + hex[1]+hex[1] + hex[2]+hex[2] + hex[3]+hex[3]
-          : hex;
-        if (ch) ch.textContent = hex;
-        if (crow) crow.style.opacity = on ? '1' : '.4';
-        /* 沒有 LOGO 就沒有像素可吸 */
-        if (pick){
-          var has = !!(window._bnLogos && window._bnLogos.length);
-          pick.disabled = !has;
-          pick.style.opacity = has ? '1' : '.4';
-          pick.style.cursor  = has ? 'pointer' : 'default';
-        }
+        document.querySelectorAll('.bn-logo-colors').forEach(function(row){
+          row.style.opacity = on ? '1' : '.55';
+          row.title = on ? '' : '\u958b\u555f Logo \u52a0\u5e95\u8272\u5f8c\u5957\u7528';
+        });
       };
 
       if (padInp) {
@@ -496,48 +475,6 @@
           _bnCommitLogos(true);
         });
       }
-      /* ══ 底框顏色 ═══════════════════════════════════════════════
-         與粗細滑桿同一個道理:底色是烤進 PNG 的,換色必須重新合成,
-         所以拖曳/滑動過程(input)只更新標籤,放開(change)才真的重算。 */
-      var bgInp  = document.getElementById('bn-logo-bgcolor');
-      var bgHex  = document.getElementById('bn-logo-bgcolor-hex');
-      var bgPick = document.getElementById('bn-logo-bgcolor-pick');
-      var bgWhite= document.getElementById('bn-logo-bgcolor-white');
-
-      /* 套用新顏色:沒開底色時只記下設定值(開啟後立即生效) */
-      function applyLogoBgColor(hex){
-        window._bnLogoBgColor = hex;
-        window._bnSyncLogoSliders();
-        if (!window._bnLogoWhiteBg || !window._bnLogos.length) {
-          if (typeof saveHistory === 'function') saveHistory();
-          return;
-        }
-        _bnCommitLogos(true);
-      }
-
-      if (bgInp) {
-        bgInp.addEventListener('input',  function(){ if (bgHex) bgHex.textContent = this.value.toUpperCase(); });
-        bgInp.addEventListener('change', function(){ applyLogoBgColor(this.value.toUpperCase()); });
-      }
-      if (bgWhite) {
-        bgWhite.addEventListener('click', function(){ applyLogoBgColor('#FFFFFF'); });
-      }
-      if (bgPick) {
-        bgPick.addEventListener('click', function(){
-          if (!window._bnLogos || !window._bnLogos.length) return;
-          _bnWithLogoMenu(function(){
-            /* ★ 一律吸「基底」的像素:底色開著時成品外圈是底框本身,
-               吸到的會是上一次選的顏色,而不是 LOGO 自己的顏色。 */
-            window.BNLogoMenu.openColorPicker(
-              _bnNormalizeLogos().map(function(lg, i){
-                return { label:'Logo ' + (i+1), src:_bnLogoBase(lg) };
-              }),
-              { color:_bnLogoBgColorGet(), onPick:applyLogoBgColor }
-            );
-          });
-        });
-      }
-
       window._bnSyncLogoSliders();
       drop.addEventListener('dragover',function(e){e.preventDefault();this.classList.add('drag');});
       drop.addEventListener('dragleave',function(){this.classList.remove('drag');});
@@ -692,6 +629,13 @@
     }
 
 
+    function _bnApplyLogoBgColor(lid, hex){
+      var lg = _bnFindLogo(lid);
+      if(!lg || !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return;
+      lg.bgColor = hex.toUpperCase();
+      _bnCommitLogos(true);
+    }
+
     /* 側欄清單:縮圖直接顯示「成品 src + 折算後的圓角」,所見即輸出。
        (舊版縮圖用 border-radius:50% 畫圓、畫布卻是 10px 圓角,兩邊不一致) */
     function renderLogoList(){
@@ -735,6 +679,43 @@
         row.appendChild(img);row.appendChild(name);row.appendChild(moveWrap);
         row.appendChild(editBtn);row.appendChild(rmBtn);
         list.appendChild(row);
+        var colors = document.createElement('div');
+        colors.className = 'bn-logo-colors';
+        colors.dataset.logoId = lg.id;
+        colors.style.cssText = 'display:flex;align-items:center;gap:5px;padding:0 4px 10px;font-size:11px;color:var(--text2);';
+        var label = document.createElement('span');
+        label.textContent = '外框色';
+        var input = document.createElement('input');
+        input.type = 'color';
+        input.setAttribute('aria-label', 'Logo ' + (i+1) + ' 外框顏色');
+        var hex = _bnLogoBgColorGet(lg);
+        input.value = hex.length === 4 ? '#' + hex[1]+hex[1]+hex[2]+hex[2]+hex[3]+hex[3] : hex;
+        input.style.cssText = 'width:28px;height:24px;padding:0;border:1px solid #555;background:none;cursor:pointer;flex-shrink:0;';
+        var value = document.createElement('span');
+        value.textContent = hex;
+        value.style.cssText = 'font-family:monospace;flex:1;';
+        input.addEventListener('input', function(){ value.textContent = this.value.toUpperCase(); });
+        input.addEventListener('change', function(){ _bnApplyLogoBgColor(lg.id, this.value); });
+        var pick = document.createElement('button');
+        pick.type = 'button'; pick.textContent = '吸色';
+        pick.setAttribute('aria-label', 'Logo ' + (i+1) + ' 吸色');
+        pick.addEventListener('click', function(){
+          _bnWithLogoMenu(function(){
+            var current = _bnFindLogo(lg.id);
+            if(!current) return;
+            window.BNLogoMenu.openColorPicker(
+              [{label:'Logo ' + (i+1), src:_bnLogoBase(current)}],
+              {color:_bnLogoBgColorGet(current), onPick:function(color){ _bnApplyLogoBgColor(lg.id, color); }}
+            );
+          });
+        });
+        var white = document.createElement('button');
+        white.type = 'button'; white.textContent = '白';
+        white.setAttribute('aria-label', 'Logo ' + (i+1) + ' 恢復白色外框');
+        white.addEventListener('click', function(){ _bnApplyLogoBgColor(lg.id, '#FFFFFF'); });
+        [pick, white].forEach(function(btn){ btn.style.cssText = 'padding:4px 6px;border:1px solid #555;border-radius:4px;background:#292929;color:#eee;cursor:pointer;flex-shrink:0;'; });
+        [label,input,value,pick,white].forEach(function(el){ colors.appendChild(el); });
+        list.appendChild(colors);
       });
       /* drop 按鈕狀態 */
       var drop=document.getElementById('bn-logo-drop');
@@ -857,18 +838,24 @@
       }
     }
 
+    var pendingLogos = 0;
+    var logoUploadQueue = Promise.resolve();
+    var logoSequence = 0;
     function doLoadLogo(file){
-      if(window._bnLogos.length>=MAX_LOGOS)return;
-      readFile(file).then(function(src){
-        /* LOGO 一律保留使用者上傳的原始邊界,不做自動裁切
-           (要裁掉透明/白色邊距,請用 LOGO 選單的「裁切」自行框選)。
-           這裡只限制最大尺寸,避免大圖佔用記憶體;讀取失敗會回傳原 src。 */
-        _resizeIfNeeded(src, 800, function(finalSrc) {
-          window._bnLogos.push(_bnMakeLogo('logo_' + Date.now(), finalSrc));
-          /* 白底若已開啟,_bnCommitLogos 的重算會自動合成,不必在這裡分支 */
+      if(window._bnLogos.length + pendingLogos >= MAX_LOGOS)return;
+      pendingLogos++;
+      // Reserve slots immediately and keep selection order across async reads.
+      logoUploadQueue = logoUploadQueue.then(function(){
+        return readFile(file).then(function(src){
+          return new Promise(function(resolve){ _resizeIfNeeded(src, 800, resolve); });
+        }).then(function(finalSrc){
+          if(window._bnLogos.length >= MAX_LOGOS)return;
+          window._bnLogos.push(_bnMakeLogo('logo_' + Date.now() + '_' + (++logoSequence), finalSrc));
           _bnCommitLogos(true);
         });
-      });
+      }).catch(function(err){
+        console.warn('Logo upload failed', err);
+      }).then(function(){ pendingLogos--; });
     }
 
     /* LOGO / 商品圖尺寸限制：超過 maxPx 則等比縮小，否則直接使用原圖 */

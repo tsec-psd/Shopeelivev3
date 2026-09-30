@@ -202,3 +202,10 @@
 
 body.sbd-mode .bar範圍,
 body.sbd-mode .購物專家 { display: block; } /* 只有 SBD 才顯示這兩層 */
+
+/* Three vendor logos: widen only within the header, preserving the product area. */
+body[data-bn-logo-count="3"] { --logo-zone-w: 195; --logo-gap: 6; }
+body[data-bn-logo-count="3"] .廠商LOGO範圍 { width: 195px !important; }
+body[data-bn-logo-count="3"] .廠商LOGO範圍 { left: 441px !important; }
+body[data-bn-logo-count="3"] .蝦導播LOGO範圍 { width: 355px !important; }
+body[data-bn-logo-count="3"] .分隔線 { left: 425px !important; }

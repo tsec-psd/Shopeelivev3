@@ -182,3 +182,10 @@
   --bn-sbd-overlay: "SBD_白框_直播大廳.png";
   --bn-sbd-overlay-lightbg: "SBD_白框_直播大廳_黑字.png";      /* ★淺底用：LIVE 黑字版檔名填這裡（放 img/），留空=沿用上面白字版 */
 }
+
+/* Three vendor logos: widen only within the header, preserving the product area. */
+body[data-bn-logo-count="3"] { --logo-zone-w: 190; --logo-gap: 6; }
+body[data-bn-logo-count="3"] .廠商LOGO範圍 { width: 190px !important; }
+body[data-bn-logo-count="3"] .廠商LOGO範圍 { left: 429px !important; }
+body[data-bn-logo-count="3"] .蝦導播LOGO範圍 { width: 350px !important; }
+body[data-bn-logo-count="3"] .分隔線 { left: 411px !important; }

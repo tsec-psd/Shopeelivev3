@@ -275,3 +275,10 @@ body.sbd-mode .SBD_LOGO範圍 { display: block !important; }
   --bn-sbd-overlay: "SBD_白框_直播時縮圖.png";
   --bn-sbd-overlay-lightbg: "SBD_白框_直播時縮圖_黑字.png";      /* ★淺底用：LIVE 黑字版檔名填這裡（放 img/），留空=沿用上面白字版 */
 }
+
+/* 公版受平台遮罩限制：三顆也維持原本 97px 寬度，只縮小顆間距。 */
+body[data-bn-logo-count="3"] { --logo-zone-w: 97; --logo-gap: 6; }
+body[data-bn-logo-count="3"] .廠商LOGO範圍 { width: 97px !important; }
+body[data-bn-logo-count="3"]:not(.sbd-mode) { --logo-round-down: 1; }
+body[data-bn-logo-count="3"].sbd-mode { --logo-zone-w: 138; --logo-zone-h: 42; }
+body[data-bn-logo-count="3"].sbd-mode .廠商LOGO範圍 { width: 138px !important; }
