@@ -1335,9 +1335,22 @@
             左側完全透明 → 右側漸變為實色（副標同色）
             使用 background 漸層取代 backgroundColor，實現透明漸層效果 */
       if (e.data.barBg) {
+        /* transparent 的黑色 RGB 會被 html2canvas 混入漸層。
+           使用同色 RGB、alpha 0，讓預覽與匯出都只改變透明度。 */
+        var barColorCanvas = document.createElement('canvas');
+        barColorCanvas.width = barColorCanvas.height = 1;
+        var barColorCtx = barColorCanvas.getContext('2d');
+        barColorCtx.fillStyle = e.data.barBg;
+        barColorCtx.fillRect(0, 0, 1, 1);
+        var barRgb = barColorCtx.getImageData(0, 0, 1, 1).data;
+        var barTransparent = 'rgba(' + barRgb[0] + ',' + barRgb[1] + ',' + barRgb[2] + ',0)';
+        var barCanvas = document.getElementById('canvas');
+        var barSymmetric = barCanvas && barCanvas.dataset.barGradient === 'symmetric';
+        var barGradient = barSymmetric
+          ? 'linear-gradient(to right, ' + barTransparent + ' 0%, ' + e.data.barBg + ' 20%, ' + e.data.barBg + ' 80%, ' + barTransparent + ' 100%)'
+          : 'linear-gradient(to right, ' + barTransparent + ' 0%, ' + e.data.barBg + ' 50%)';
         document.querySelectorAll('.bar範圍').forEach(function(el) {
-          el.style.background =
-            'linear-gradient(to right, transparent 0%, ' + e.data.barBg + ' 50%)';
+          el.style.background = barGradient;
         });
       }
 
