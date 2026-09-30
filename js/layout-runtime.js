@@ -352,8 +352,9 @@
      ★ 數學性質:n=1(只有一家廠商 LOGO)時,本式恆等於
        contain 於 availW×zoneH,與 p 無關 —— 故單張情境永遠不受 p 影響。 */
   var LOGO_BALANCE_P = 0.75;
+  var _relayoutVendorLogos = function() {};
 
-  function _calcLogoRowSizes(ratios, zoneW, zoneH, gap) {
+  function _calcLogoRowSizes(ratios, zoneW, zoneH, gap, roundDown) {
     var n = ratios.length;
     if (!n) return [];
 
@@ -377,7 +378,8 @@
     var K = Math.min(availW / sumWf, zoneH / maxHf);
 
     return factors.map(function (f) {
-      return { w: Math.round(K * f.wf), h: Math.round(K * f.hf) };
+      var round = roundDown ? Math.floor : Math.round;
+      return { w: round(K * f.wf), h: round(K * f.hf) };
     });
   }
 
@@ -499,6 +501,9 @@
       if (e.data.type === 'bn-logos') logos = e.data.logos || [];
       else if (e.data.dataUrl) logos = [{id:'single', src:e.data.dataUrl}];
 
+      document.body.dataset.bnLogoCount = String(Math.min(logos.length, 3));
+      _relayoutVendorLogos = function() {};
+      _fitAllLogoImgs();
       if (!logos.length) { zone.style.opacity=''; zone.style.background=''; return; }
 
       /* 廠商 LOGO 圓角:HBN / IG方 / flex 三個分支共用同一個值。
@@ -518,65 +523,7 @@
       zone.style.overflow   = 'hidden';
 
       /* HBN：absolute 多張；IG方/ddcard方：單張 contain 正方；IG橫/ddcard橫：flex 並排 */
-      if(isHBN){
-        /* HBN：每個 logo 用 absolute 定位，從左往右排，間距 GAP px
-           全部 onload 後計算總寬，若超出容器則等比縮小所有圖片 */
-        zone.style.display = '';
-        var GAP = 8;
-        var loadedCount = 0;
-        var totalLogos  = logos.length;
-
-        logos.forEach(function(lg, i){
-          var img = new Image(); img.className = 'bn-logo-img';
-          var roundCss = lg.round ? LOGO_ROUND_CSS : '';
-          /* 初始設為 0x0 完全隱藏，onload 後才設定精確尺寸
-             避免 height:100% 在計算前造成拉伸 */
-          img.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;'+
-                              'object-fit:contain;pointer-events:none;'+roundCss;
-          img.src = lg.src;
-          zone.appendChild(img);
-
-          img.onload = function(){
-            loadedCount++;
-            var cs    = window.getComputedStyle(zone);
-            /* 優先讀 CSS 變數 --logo-zone-h / --logo-zone-w（精確設計尺寸）
-               fallback 到 getComputedStyle → 最後才用預設值 */
-            var rootCs = window.getComputedStyle(document.documentElement);
-            var zoneH = parseFloat(rootCs.getPropertyValue('--logo-zone-h')) ||
-                        parseFloat(cs.height) || 57;
-            var zoneW = parseFloat(rootCs.getPropertyValue('--logo-zone-w')) ||
-                        parseFloat(cs.width)  || 125;
-
-            /* 只記下原圖長寬比，尺寸等全部載完後由 _calcLogoRowSizes 統一計算 */
-            img.dataset.bnRatio = String(img.naturalWidth / (img.naturalHeight || 1));
-
-            if (loadedCount < totalLogos) return; /* 等其他圖也 load */
-
-            /* 全部載完：以「等面積」計算各自尺寸（原理見 _calcLogoRowSizes 上方註解） */
-            var allImgs = Array.from(zone.querySelectorAll('img.bn-logo-img'));
-            var sizes = _calcLogoRowSizes(
-              allImgs.map(function(el){ return parseFloat(el.dataset.bnRatio) || 1; }),
-              zoneW, zoneH, GAP);
-
-            var x = 0;
-            allImgs.forEach(function(el, idx){
-              var s = sizes[idx] || { w: 0, h: 0 };
-              el.style.width   = s.w + 'px';
-              el.style.height  = s.h + 'px';
-              el.style.left    = x + 'px';
-              /* ★ 等面積之後各張高度不再相同，垂直置中必須逐張算
-                 （舊版全體同高，才能共用一個 topOffset）*/
-              el.style.top     = Math.round((zoneH - s.h) / 2) + 'px';
-              el.style.display = 'block';
-              x += s.w + GAP;
-            });
-          };
-
-          img.onerror = function(){
-            loadedCount++;
-          };
-        });
-      } else if(isIGSquare){
+      if (isIGSquare) {
         /* IG方：單張，依較大邊 contain 縮放，置中不裁切 */
         zone.style.display = 'flex';
         zone.style.alignItems = 'center';
@@ -590,67 +537,59 @@
         img0.src = lg0.src;
         zone.appendChild(img0);
       } else {
-        /* flex 置中模式：多張廠商 LOGO 並排，自動縮放至 zone 範圍
-           蝦導播 LOGO（.蝦導播LOGO範圍）是 zone 的 flex sibling，大小不受影響
-           ① 載入所有圖片，量測各自在 zoneH 高度下的自然寬度
-           ② 若總寬超出 zoneW，等比縮小所有廠商 LOGO
-           ③ zone 切換為 flex 並排，logo 設為計算後的精確尺寸 */
-        var FLEX_GAP  = 10;
-        var fRootCs   = window.getComputedStyle(document.documentElement);
-        var flexZoneH = parseFloat(fRootCs.getPropertyValue('--logo-zone-h')) ||
-                        parseFloat(window.getComputedStyle(zone).height) || 60;
-        var flexZoneW = parseFloat(fRootCs.getPropertyValue('--logo-zone-w')) ||
-                        parseFloat(window.getComputedStyle(zone).width)  || 120;
-        var flexLoaded = 0;
-        var flexTotal  = logos.length;
-        var flexImgs   = [];
-
-        logos.forEach(function(lg) {
-          var img = new Image(); img.className = 'bn-logo-img';
-          var rCss = lg.round ? LOGO_ROUND_CSS : '';
-          img.style.cssText = 'width:0;height:0;object-fit:contain;pointer-events:none;display:none;flex-shrink:0;' + rCss;
-          img.src = lg.src;
-          flexImgs.push(img);
+        var renderToken = (zone._bnLogoRenderToken || 0) + 1;
+        zone._bnLogoRenderToken = renderToken;
+        var pending = logos.length;
+        var rowImgs = logos.map(function(lg) {
+          var img = new Image();
+          img.className = 'bn-logo-img';
+          img.style.cssText = 'width:0;height:0;display:none;object-fit:contain;pointer-events:none;flex-shrink:0;' + (lg.round ? LOGO_ROUND_CSS : '');
           zone.appendChild(img);
-
+          return img;
+        });
+        function layoutLogoRow() {
+          if (pending || zone._bnLogoRenderToken !== renderToken || !rowImgs.some(function(img){return img.parentNode === zone;})) return;
+          var valid = rowImgs.filter(function(img){ return img.dataset.bnRatio && img.parentNode === zone; });
+          if (!valid.length) return;
+          // Read inherited overrides from the zone so three-logo and SBD rules apply.
+          zone.style.removeProperty('width');
+          var cs = getComputedStyle(zone);
+          var w = parseFloat(cs.getPropertyValue('--logo-zone-w')) || parseFloat(cs.width) || 120;
+          var h = parseFloat(cs.getPropertyValue('--logo-zone-h')) || parseFloat(cs.height) || 60;
+          var gap = parseFloat(cs.getPropertyValue('--logo-gap')) || (isHBN ? 8 : 10);
+          var sizes = _calcLogoRowSizes(valid.map(function(img){return +img.dataset.bnRatio;}), w, h, gap,
+            cs.getPropertyValue('--logo-round-down').trim() === '1');
+          zone.style.display = isHBN ? '' : 'flex';
+          zone.style.alignItems = 'center';
+          zone.style.justifyContent = 'center';
+          zone.style.gap = gap + 'px';
+          var x = 0;
+          valid.forEach(function(img, i) {
+            img.style.width = sizes[i].w + 'px';
+            img.style.height = sizes[i].h + 'px';
+            img.style.display = 'block';
+            if (isHBN) {
+              img.style.position = 'absolute';
+              img.style.left = x + 'px';
+              img.style.top = Math.round((h - sizes[i].h) / 2) + 'px';
+            }
+            x += sizes[i].w + (i < valid.length - 1 ? gap : 0);
+          });
+          if (!isHBN) zone.style.setProperty('width', Math.max(1, x) + 'px', 'important');
+        }
+        _relayoutVendorLogos = layoutLogoRow;
+        rowImgs.forEach(function(img, i) {
           img.onload = function() {
-            flexLoaded++;
-            /* 只記下原圖長寬比，尺寸等全部載完後由 _calcLogoRowSizes 統一計算 */
             img.dataset.bnRatio = String(img.naturalWidth / (img.naturalHeight || 1));
-            if (flexLoaded < flexTotal) return;
-
-            /* 全部載完：以「等面積」計算各自尺寸（與上面 hbn 分支共用同一支函式，
-               確保五個版位的廠商 LOGO 排版行為一致，不會兩邊各自演化） */
-            var n = flexImgs.length;
-            var sizes = _calcLogoRowSizes(
-              flexImgs.map(function(el){ return parseFloat(el.dataset.bnRatio) || 1; }),
-              flexZoneW, flexZoneH, FLEX_GAP);
-
-            zone.style.display        = 'flex';
-            zone.style.alignItems     = 'center';   /* 各張高度不同，靠這行垂直置中 */
-            zone.style.justifyContent = 'center';
-            zone.style.gap            = FLEX_GAP + 'px';
-
-            var renderedW = 0;
-            flexImgs.forEach(function(el, idx) {
-              var s = sizes[idx] || { w: 0, h: 0 };
-              el.style.width   = s.w + 'px';
-              el.style.height  = s.h + 'px';
-              el.style.display = 'block';
-              renderedW += s.w;
-              if (idx < n - 1) renderedW += FLEX_GAP;   /* 多張廠商 logo 之間的間距也算進去 */
-            });
-
-            /* ★ 方形/窄型 logo 修正：把 .廠商LOGO範圍（flex item）的寬度收合成
-               「廠商 logo 實際渲染寬」，而不是固定的 --logo-zone-w。
-               收合後廠商 logo 會緊貼分隔線（只剩 .LOGO範圍 的 gap），
-               且因 .LOGO範圍 本身是 justify-content:center，
-               整串 LOGO（蝦導播＋分隔線＋廠商）會自動重新水平置中。
-               用 setProperty(...,'important') 覆寫 config.css 的 width:...!important。
-               ★ 只動廠商框，完全不碰蝦導播 LOGO 的框與大小。 */
-            zone.style.setProperty('width', Math.max(1, renderedW) + 'px', 'important');
+            pending--;
+            layoutLogoRow();
           };
-          img.onerror = function() { flexLoaded++; };
+          img.onerror = function() {
+            img.remove();
+            pending--;
+            layoutLogoRow();
+          };
+          img.src = logos[i].src;
         });
       }
     }
@@ -2403,6 +2342,7 @@
     var pzone = getProductZone();
     if (!pzone) return;
     document.body.classList.toggle('sbd-mode', !!toSbd);
+    _relayoutVendorLogos();
 
     /* ★ 蝦導播 LOGO 重算等比：SBD 切換會換掉 LOGO 容器尺寸
        （公版 317×38 ↔ SBD 280×38，SBD 限定 LOGO 由 none 轉 block），
