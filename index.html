@@ -253,6 +253,10 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
   display: block;
 }
 .color-dot:hover { transform: scale(1.18); box-shadow: 0 0 0 3px rgba(255,255,255,.15); }
+.color-auto-btn { margin-left:8px;padding:6px 9px;min-height:30px;border:1px solid #558e80;border-radius:5px;background:#183e35;color:#c7f4df;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap; }
+.color-auto-btn[data-manual="true"] { border-color:#dc9a51;background:#49321d;color:#ffe0ac; }
+.color-auto-btn:hover { filter:brightness(1.2); }
+.color-auto-btn:focus-visible { outline:2px solid #fff;outline-offset:2px; }
 #cp-panel {
   display: none; position: fixed;
   background: #1e1e1e; border: 1px solid #3d3d3d;
@@ -1748,6 +1752,7 @@ var colorState = {
 var COLOR_FIELDS = [
   { key: 'canvasBg',    label: '背景色' },
   { key: 'barBg',       label: '主播名 Bar', follow: 'subText', lockKey: 'barBgLocked' },
+  { key: 'bgShadowColor', label: '背景陰影', lockKey: 'bgShadowLocked' },
   { key: 'shadowColor', label: '商品陰影',   lockKey: 'shadowLocked' }
 ];
 
@@ -1757,7 +1762,8 @@ var COLOR_FIELDS = [
    維持「使用者沒動過就不送」,只有真的挑了色才進入廣播。 */
 var COLOR_FALLBACK = {
   barBg:       function(){ return colorState.subText || '#2540b5'; },
-  shadowColor: function(){ return '#000000'; }
+  shadowColor: function(){ return '#000000'; },
+  bgShadowColor: function(){ return colorState.shadowColor || '#000000'; }
 };
 function colorValue(key) {
   var v = colorState[key];
@@ -1791,6 +1797,10 @@ var TEXT_COLOR_KEYS = ['mainText','subText','dateText','hostText'];
 var cpActiveKey = null;
 
 function renderColorPickers() {
+  if (!colorState.bgShadowColor && colorState.shadowColor) {
+    colorState.bgShadowColor = colorState.shadowColor;
+    colorState.bgShadowLocked = !!colorState.shadowLocked;
+  }
   var wrap = document.getElementById('color-rows');
   if (!wrap) return;
   wrap.innerHTML = '';
@@ -1813,30 +1823,27 @@ function renderColorPickers() {
     dot.addEventListener('keydown', _bnA11yActivate);
     row.appendChild(dot);
 
-    /* ★ 跟隨型欄位(目前只有 Bar 跟隨副標色):挑過色會鎖定不再跟隨,
-       這顆 ↺ 解除鎖定並立刻同步回跟隨來源。沒鎖定時淡出顯示,讓狀態一眼可辨。 */
-    if (f.follow) {
+    /* 手動調色後鎖定；按鈕解除鎖定並立即恢復 Bar 或陰影的自動色。 */
+    if (f.lockKey) {
       var rst = document.createElement('button');
       rst.type = 'button';
       rst.id = 'reset-' + f.key;
-      rst.textContent = '↺';
-      rst.title = '恢復跟隨' + (f.follow === 'subText' ? '副標色' : f.follow);
-      rst.style.cssText = 'margin-left:6px;background:none;border:none;cursor:pointer;' +
-        'font-size:13px;line-height:1;padding:2px 4px;color:var(--text3,#666);';
-      rst.style.opacity = colorState[f.lockKey] ? '1' : '.35';
+      rst.className = 'color-auto-btn';
+      updateColorAutoButton(rst, f);
       rst.addEventListener('click', (function(fld){ return function(ev){
         ev.stopPropagation();
         colorState[fld.lockKey] = false;
-        var srcColor = colorState[fld.follow];
+        var palette = window.BNColorTheme && window.BNColorTheme.generate(colorState.canvasBg);
+        var srcColor = fld.follow ? colorState[fld.follow] : palette && palette.shadowColor;
         if (srcColor) {
           colorState[fld.key] = srcColor;
           if (fld.key === 'barBg') colorState.barText = pickBarText(srcColor);
         } else {
           delete colorState[fld.key];      /* 來源也沒設定 → 回到「完全沒動過」 */
         }
+        broadcastColors();
         renderColorPickers();
         if (typeof saveHistory === 'function') saveHistory();
-        broadcastColors();
       }; })(f));
       row.appendChild(rst);
     }
@@ -1849,20 +1856,28 @@ function renderColorPickers() {
     var dot = document.getElementById('dot-' + k);
     if (!dot) return;
     dot.style.background = colorState[k];
-    dot.addEventListener('click', (function(key){ return function(e){ openPanel(key, e); }; })(k));
+    dot.onclick = (function(key){ return function(e){ openPanel(key, e); }; })(k);
   });
 
   /* 建色票：內建 + 自訂，統一由 renderSwatches() 處理 */
   renderSwatches();
 
   /* hex input 事件 */
-  document.getElementById('cp-hex-input').addEventListener('input', function() {
+  document.getElementById('cp-hex-input').oninput = function() {
     var v = this.value.trim();
     if (!/^#/.test(v)) v = '#' + v;
     var native = document.getElementById('cp-native');
     if (native && /^#[0-9a-fA-F]{6}$/.test(v)) native.value = v;
     if (/^#[0-9a-fA-F]{6}$/.test(v)) applyColor(v);
-  });
+  };
+}
+
+function updateColorAutoButton(button, field) {
+  var manual = !!colorState[field.lockKey];
+  button.textContent = manual ? '↻ 恢復自動' : '✓ 自動配色';
+  button.dataset.manual = String(manual);
+  button.title = field.label + (manual ? '：目前手動配色，點擊恢復自動跟隨配色器' : '：自動跟隨配色器');
+  button.setAttribute('aria-label', button.title);
 }
 
 function openPanel(key, e) {
@@ -1890,6 +1905,11 @@ function openPanel(key, e) {
 
 function applyColor(color) {
   if (!cpActiveKey) return;
+  /* 舊暫存的背景陰影共用商品色；首次分開編輯前保留原色。 */
+  if (!colorState.bgShadowColor && (colorState.shadowColor || cpActiveKey === 'shadowColor')) {
+    colorState.bgShadowColor = colorState.shadowColor || '#000000';
+    colorState.bgShadowLocked = !!colorState.shadowLocked;
+  }
   colorState[cpActiveKey] = color;
 
   /* ★ 規格 4.3 的連動規則(說明見 COLOR_FIELDS 上方)
@@ -1908,7 +1928,7 @@ function applyColor(color) {
     if (barDot) barDot.style.background = color;
   }
   var rstBtn = document.getElementById('reset-' + cpActiveKey);
-  if (rstBtn) rstBtn.style.opacity = '1';
+  if (rstBtn) updateColorAutoButton(rstBtn, COLOR_FIELDS.find(function(f){ return f.key === cpActiveKey; }));
 
   /* 更新圓點（sidebar 和 inline 共用同一個 id） */
   var dot = document.getElementById('dot-' + cpActiveKey);
