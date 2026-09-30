@@ -46,7 +46,7 @@ html, body {
 <body data-fw="900" data-fh="1600">
 <div id="css-err"></div>
 <div id="stage">
-  <div id="canvas">
+  <div id="canvas" data-bar-gradient="symmetric">
     <img id="底圖" src="" alt="">
 
     <!-- ══ LOGO 區域（flex 置中模式）══ -->
@@ -82,23 +82,7 @@ html, body {
   </div>
 </div>
 
-<!-- ══ IG bar 雙側透明漸層覆寫 ══
-     layout-runtime.js 預設只有左側淡出（transparent→color），
-     IG 設計需要兩側都淡出（transparent→color→transparent）。
-     setTimeout(0) 確保在 runtime 設定之後才覆寫。
--->
-<script>
-window.addEventListener('message', function(e) {
-  if (!e.data || e.data.type !== 'bn-color-ext' || !e.data.barBg) return;
-  var barColor = e.data.barBg;
-  setTimeout(function() {
-    document.querySelectorAll('.bar範圍').forEach(function(el) {
-      el.style.background =
-        'linear-gradient(to right, transparent 0%, ' + barColor + ' 20%, ' + barColor + ' 80%, transparent 100%)';
-    });
-  }, 0);
-});
-</script>
+<!-- IG bar gradient is rendered by layout-runtime.js. -->
 <script src="../js/anchor-transform.js"></script>
 <script src="../js/shadow-plugin.js"></script>
 <script src="../js/layout-runtime.js"></script>
