@@ -49,11 +49,10 @@
     return n;
   }
   function colorBg()  { return (global.colorState && global.colorState.canvasBg)   || FALLBACK_BG; }
-  /* 陰影色來源:優先 shadowRgba,但配色器只把 shadowColor(hex)寫回 colorState、
-     不寫 shadowRgba,故以 shadowColor 為可靠後備(withAlpha 會統一鎖成 --shadow-alpha)。 */
+  /* 共編背景使用獨立背景陰影色；舊暫存才回退共用色。 */
   function colorSh()  {
     var cs = global.colorState;
-    return (cs && (cs.shadowRgba || cs.shadowColor)) || FALLBACK_SH;
+    return (cs && (cs.bgShadowColor || cs.shadowRgba || cs.shadowColor)) || FALLBACK_SH;
   }
   function products() { return Array.isArray(global._bnProducts) ? global._bnProducts : []; }
   function persons()  { return Array.isArray(global._bnPersons)  ? global._bnPersons  : []; }
@@ -306,7 +305,7 @@
     ctx.lineTo(W * s.slantX / 100, bottomPx);          /* 左下(斜角) */
     ctx.closePath();
     var grad = ctx.createLinearGradient(W * s.gradFrom / 100, 0, W, 0);
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0, withAlpha(colorSh(), 0));
     grad.addColorStop(1, rgba);
     ctx.fillStyle = grad; ctx.fill();
 

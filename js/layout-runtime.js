@@ -1376,7 +1376,7 @@
               左下 76.0% 115%  ← 此 X 為斜切估算值，可微調控制斜角
             漸層方向：左→右 + 下→上 同時（對角線漸層 to top left 表達）
             羽化：blur(30px) 加強邊緣暈散 */
-      if ((e.data.shadowRgba || e.data.shadowColor) && !_isSbdMode()) {
+      if ((e.data.bgShadowRgba || e.data.bgShadowColor || e.data.shadowRgba || e.data.shadowColor) && !_isSbdMode()) {
         var canvas = document.getElementById('canvas');
         if (canvas) {
           /* ── Canvas 陰影取代 div+clip-path+filter ──────────────────
@@ -1408,7 +1408,7 @@
 
           /* --shadow-rgba：手動鎖定陰影深淺，優先於配色器計算值 */
           var customRgba = (rootCsSh.getPropertyValue('--shadow-rgba')||'').trim().replace(/["']/g,'');
-          var rgba = customRgba || e.data.shadowRgba || 'rgba(0,0,0,0.22)';
+          var rgba = customRgba || e.data.bgShadowRgba || e.data.shadowRgba || 'rgba(0,0,0,0.22)';
 
           /* --shadow-alpha：只替換 alpha 值，RGB 仍跟配色器走
              例：--shadow-alpha: 0.45 → 配色器的顏色不變，透明度鎖定 0.45
@@ -1448,7 +1448,14 @@
           ctx.closePath();
 
           var grad = ctx.createLinearGradient(W * sGradFrom / 100, 0, W, 0);
-          grad.addColorStop(0, 'rgba(0,0,0,0)');
+          /* 保留色相，僅讓透明度淡出；遮罩的黑白 RGB 不參與填色。 */
+          var shadowColorCanvas = document.createElement('canvas');
+          shadowColorCanvas.width = shadowColorCanvas.height = 1;
+          var shadowColorCtx = shadowColorCanvas.getContext('2d');
+          shadowColorCtx.fillStyle = rgba;
+          shadowColorCtx.fillRect(0, 0, 1, 1);
+          var shadowRgb = shadowColorCtx.getImageData(0, 0, 1, 1).data;
+          grad.addColorStop(0, 'rgba(' + shadowRgb[0] + ',' + shadowRgb[1] + ',' + shadowRgb[2] + ',0)');
           grad.addColorStop(1, rgba);
           ctx.fillStyle = grad;
           ctx.fill();
@@ -1524,8 +1531,7 @@
         el.remove();
       });
 
-      /* 5. 商品即時陰影(ShadowPlugin)顏色——跟背景幾何陰影共用同一個色源
-            (e.data.shadowColor，hex)，不需要另外算色，只是多一個消費者。 */
+      /* 5. 商品即時陰影獨立使用 shadowColor；背景使用 bgShadowColor。 */
       if (e.data.shadowColor && typeof window.ShadowPlugin !== 'undefined') {
         var _shHex = String(e.data.shadowColor).replace(/^#/, '');
         if (_shHex.length === 3) _shHex = _shHex[0]+_shHex[0]+_shHex[1]+_shHex[1]+_shHex[2]+_shHex[2];

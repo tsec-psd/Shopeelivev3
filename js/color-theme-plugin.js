@@ -191,6 +191,8 @@
       barText:     palette.barText,
       shadowColor: palette.shadowColor,
       shadowRgba:  palette.shadowRgba,
+      bgShadowColor: palette.bgShadowColor || palette.shadowColor,
+      bgShadowRgba: hexToRgba(palette.bgShadowColor || palette.shadowColor || '#000000', .22),
     };
     document.querySelectorAll('.preview-block iframe').forEach(f => {
       try { f.contentWindow.postMessage(msg, '*'); } catch (_) {}
@@ -200,6 +202,13 @@
   function broadcastTheme(palette) {
     /* 更新 colorState → 觸發現有的 UI 色票更新 + autoSave 持久化 */
     if (global.colorState) {
+      migrateShadowColors(global.colorState);
+      palette = Object.assign({}, palette);
+      const cs = global.colorState;
+      if (cs.barBgLocked) { palette.barBg = cs.barBg; palette.barText = cs.barText; }
+      palette.bgShadowColor = cs.bgShadowLocked ? cs.bgShadowColor : (palette.bgShadowColor || palette.shadowColor);
+      if (cs.shadowLocked) palette.shadowColor = cs.shadowColor;
+      palette.shadowRgba = hexToRgba(palette.shadowColor, .22);
       Object.assign(global.colorState, {
         canvasBg:    palette.canvasBg,
         mainText:    palette.mainText,
@@ -211,6 +220,7 @@
         barBg:       palette.barBg,
         barText:     palette.barText,
         shadowColor: palette.shadowColor,
+        bgShadowColor: palette.bgShadowColor,
       });
     }
     if (typeof global.renderColorPickers === 'function') global.renderColorPickers();
@@ -229,6 +239,14 @@
       });
     }
     _broadcastExt(palette);
+  }
+
+  /* 舊暫存以同一色控制兩種陰影，首次讀取時保留其外觀與手動狀態。 */
+  function migrateShadowColors(cs) {
+    if (cs && !cs.bgShadowColor && cs.shadowColor) {
+      cs.bgShadowColor = cs.shadowColor;
+      cs.bgShadowLocked = !!cs.shadowLocked;
+    }
   }
 
   /* ════════════════════════════════════════════════════════
@@ -515,6 +533,7 @@
       const _origBroadcast = global.broadcastColors;
       global.broadcastColors = function () {
         const cs = global.colorState;
+        migrateShadowColors(cs);
 
         /* ★ 2026-09 修正「上傳暫存 / Undo 後文字顏色回不來」
            ────────────────────────────────────────────────────────────
@@ -539,9 +558,9 @@
           _ctAutoGenBg = cs.canvasBg;
         }
 
-        /* ① canvasBg 非預設值，且與上次生成不同 → 重新生成全套配色 */
+        /* ① 背景改變時重新配色（包含切回預設藍）；初次載入仍保留版型預設。 */
         if (cs && cs.canvasBg &&
-            cs.canvasBg.toLowerCase() !== _DEFAULT_BG.toLowerCase() &&
+            (cs.canvasBg.toLowerCase() !== _DEFAULT_BG.toLowerCase() || _ctAutoGenBg !== null) &&
             cs.canvasBg !== _ctAutoGenBg) {
 
           _ctAutoGenBg = cs.canvasBg;
@@ -559,6 +578,7 @@
                鎖定狀態由 bn.html 的 applyColor 寫入,並隨快照持久化(在 colorState 內)。 */
             if (!cs.barBgLocked) { cs.barBg = p.barBg; cs.barText = p.barText; }
             if (!cs.shadowLocked) cs.shadowColor = p.shadowColor;
+            if (!cs.bgShadowLocked) cs.bgShadowColor = p.shadowColor;
             /* 重繪側欄色票點 */
             if (typeof global.renderColorPickers === 'function') {
               global.renderColorPickers();
@@ -570,11 +590,12 @@
         _origBroadcast.call(this);
 
         /* ③ 送出擴充色 */
-        if (cs && (cs.barBg || cs.shadowColor)) {
+        if (cs && (cs.barBg || cs.shadowColor || cs.bgShadowColor)) {
           _broadcastExt({
             barBg:       cs.barBg,
             barText:     cs.barText,
             shadowColor: cs.shadowColor,
+            bgShadowColor: cs.bgShadowColor,
             shadowRgba:  hexToRgba(cs.shadowColor || '#000000', .22),
           });
         }
@@ -589,7 +610,9 @@
     global._bnOnIframeReady = function (id) {
       if (typeof origOnReady === 'function') origOnReady(id);
       const cs = global.colorState;
-      if (!cs || !cs.canvasBg || cs.canvasBg.toLowerCase() === _DEFAULT_BG.toLowerCase()) return;
+      if (!cs || !cs.canvasBg) return;
+      migrateShadowColors(cs);
+      if (cs.canvasBg.toLowerCase() === _DEFAULT_BG.toLowerCase() && !cs.barBg && !cs.shadowColor && !cs.bgShadowColor) return;
       const p = generateTheme(cs.canvasBg);
       if (!p) return;
       const f = document.getElementById('iframe-' + id);
@@ -607,12 +630,15 @@
             barBg:       cs.barBg       || p.barBg,
             barText:     cs.barText     || p.barText,
             shadowColor: cs.shadowColor || p.shadowColor,
+            bgShadowColor: cs.bgShadowColor || p.shadowColor,
           };
           ext.shadowRgba = cs.shadowColor ? hexToRgba(cs.shadowColor, .22) : p.shadowRgba;
           try { f.contentWindow.postMessage({
             type: 'bn-color-ext',
             barBg: ext.barBg, barText: ext.barText,
             shadowColor: ext.shadowColor, shadowRgba: ext.shadowRgba,
+            bgShadowColor: ext.bgShadowColor,
+            bgShadowRgba: hexToRgba(ext.bgShadowColor, .22),
           }, '*'); } catch (_) {}
           _broadcastLogoToId(id, _pickLogoSrc(cs.canvasBg));
         }, 300);
