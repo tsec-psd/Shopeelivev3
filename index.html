@@ -715,7 +715,11 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
       sbd: (typeof window._bnGetSbdState === 'function') ? window._bnGetSbdState() : null,
       /* ★ 商品即時陰影的光源角度(左/中/右)：獨立全域變數，不在 products/colors
          陣列裡，不會跟著泛用快照自動涵蓋，需要明確存一個欄位。 */
-      shadowAngle: window._bnShadowAngle || 'left',
+      shadowAngle: (window._bnShadowAngle != null) ? window._bnShadowAngle : 'left',
+      /* 陰影模糊程度(倍率，1 = 預設)：同上，獨立全域變數要明確存 */
+      shadowBlur: (typeof window._bnShadowBlur === 'number') ? window._bnShadowBlur : 1,
+      shadowNearSoft: (typeof window._bnShadowNearSoft === 'number') ? window._bnShadowNearSoft : 0,
+      shadowContact:  (typeof window._bnShadowContact  === 'number') ? window._bnShadowContact  : 1,
     };
   }
 
@@ -846,7 +850,13 @@ html, body { height: 100%; background: var(--bg0); color: var(--text);
          沒有這個欄位時退回預設'left',不報錯。真正的 postMessage 重新廣播
          交給下方 _bnRebroadcastProducts()/_bnOnIframeReady 同一批動作觸發即可，
          這裡先重設全域值 + 同步側欄按鈕外觀。 */
-      window._bnShadowAngle = state.shadowAngle || 'left';
+      /* ★ 角度現在是數字(-90~90)，正中 = 0；不能用 `|| 'left'`，否則 0 會被打回左邊。
+         舊快照的 'left'/'top'/'right' 字串原樣保留，由 bn-editor-plugin 換算。 */
+      window._bnShadowAngle = (state.shadowAngle != null) ? state.shadowAngle : 'left';
+      /* 舊快照沒有 shadowBlur → 退回預設 1(= 改版前的模糊程度) */
+      window._bnShadowBlur = (typeof state.shadowBlur === 'number') ? state.shadowBlur : 1;
+      window._bnShadowNearSoft = (typeof state.shadowNearSoft === 'number') ? state.shadowNearSoft : 0;
+      window._bnShadowContact  = (typeof state.shadowContact  === 'number') ? state.shadowContact  : 1;
       if (typeof window._bnBroadcastShadowAngle === 'function') window._bnBroadcastShadowAngle();
 
       // 3. 呼叫 UI 清單列表更新
@@ -2665,7 +2675,10 @@ function collectHistoryState(){
     logoWhiteBg: !!window._bnLogoWhiteBg,
     logoPad:     (typeof window._bnLogoPad === 'number') ? window._bnLogoPad : 0.10,
     logoBgColor: (typeof window._bnLogoBgColor === 'string') ? window._bnLogoBgColor : '#FFFFFF',
-    shadowAngle: window._bnShadowAngle || 'left'
+    shadowAngle: (window._bnShadowAngle != null) ? window._bnShadowAngle : 'left',
+    shadowBlur: (typeof window._bnShadowBlur === 'number') ? window._bnShadowBlur : 1,
+    shadowNearSoft: (typeof window._bnShadowNearSoft === 'number') ? window._bnShadowNearSoft : 0,
+    shadowContact:  (typeof window._bnShadowContact  === 'number') ? window._bnShadowContact  : 1
   };
 }
 /* ★★★ 唯一的歷史寫入排程器(2026-08 收斂)

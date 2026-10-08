@@ -27,13 +27,45 @@ window.ShadowPlugin = (function () {
   };
   var ANGLE_PRESETS = { left: -35, top: 0, right: 35 };
 
-  var opts = { angle: ANGLE_PRESETS.left, presetName: 'left' };
+  /* blurMul   ：主斜影整體模糊倍率(側欄「陰影模糊」，1 = 預設)
+     nearSoft  ：腳底柔化(px，側欄「腳底柔化」，0 = 預設)。加在主斜影靠近腳底的那幾層，
+                 並同時柔化接地陰影 —— 獨立於 blurMul，見 setNearSoft() 說明
+     contactMul：接地陰影濃度倍率(側欄「接地陰影」，1 = 預設的 0.4 不透明度) */
+  var opts = { angle: ANGLE_PRESETS.left, blurMul: 1, nearSoft: 0, contactMul: 1 };
+  /* 光源角度在 ±MAIN_FADE_DEG 內，主斜影依角度線性淡出、到 0° 完全不畫 ——
+     等同舊版「中」只留接地陰影的效果，但滑桿拖過 0° 時是連續的，不會突然跳一下。 */
+  var MAIN_FADE_DEG = 15;
+  var CONTACT_ALPHA = 0.4;
   var products = {}; // id -> { img, silhouette, tinted, trim }
   var shadowRGB = '90,90,90'; // 備用預設值，正式值由 layout-runtime.js 收到 bn-color-ext 後呼叫 setShadowColorRGB() 覆蓋
 
+  /* 接受角度數字(-90 ~ 90，負 = 光從左邊來)或舊的 'left'/'top'/'right' 字串 */
   function setAngle(preset) {
-    if (typeof preset === 'number') { opts.angle = preset; opts.presetName = null; return; }
-    if (ANGLE_PRESETS[preset] != null) { opts.angle = ANGLE_PRESETS[preset]; opts.presetName = preset; }
+    var deg = (typeof preset === 'number') ? preset : ANGLE_PRESETS[preset];
+    deg = parseFloat(deg);
+    if (isFinite(deg)) opts.angle = Math.max(-90, Math.min(90, deg));
+  }
+
+  /* 模糊程度倍率(側欄「陰影模糊」滑桿，1 = 預設)。只縮放主斜影的 blur 半徑，
+     不動接地補強陰影(那層本來就是銳利的貼地細線)。 */
+  function setBlur(mul) {
+    mul = parseFloat(mul);
+    if (isFinite(mul) && mul >= 0) opts.blurMul = mul;
+  }
+
+  /* 腳底柔化(px)。主斜影最靠近腳底那層 blur 只有 softNear=1px，乘上 blurMul 也沒用；
+     商品下半部內縮(碗、鍋、球)時，從兩側露出來的正是這一段，加上貼在腳底、
+     完全不模糊的接地陰影，就是「整體模糊拉到最大，底下還是一塊銳利色塊」的來源。
+     所以獨立成一個參數：直接加在近端 blur 半徑上(往尾端線性遞減到 0)，
+     接地陰影也用它的一半做 blur。 */
+  function setNearSoft(px) {
+    px = parseFloat(px);
+    if (isFinite(px) && px >= 0) opts.nearSoft = px;
+  }
+  /* 接地陰影濃度倍率，0 = 完全不畫接地陰影 */
+  function setContact(mul) {
+    mul = parseFloat(mul);
+    if (isFinite(mul) && mul >= 0) opts.contactMul = mul;
   }
 
   function setShadowColorRGB(rgbStr) {
@@ -213,13 +245,15 @@ window.ShadowPlugin = (function () {
 
     /* 舊環境若不支援 Canvas filter，維持原本三層 stamp 效果。 */
     if (!canBlur) {
-      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 1.8, 0.2, 12, rotRad);
-      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.8, 0.28, 10, rotRad);
-      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.25, 0.25, 6, rotRad);
+      var bm = opts.blurMul;
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 1.8 * bm, 0.2, 12, rotRad);
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.8 * bm, 0.28, 10, rotRad);
+      stampLayer(targetCtx, tinted, ox, oy, pw, ph, shear, squash, FIXED.soft * 0.25 * bm, 0.25, 6, rotRad);
       return;
     }
 
     var steps = Math.max(2, FIXED.softSteps);
+    var nearExtra = opts.nearSoft;
     var tipDx = -shear * ph;
     var tipDy = -squash * ph;
 
@@ -231,7 +265,8 @@ window.ShadowPlugin = (function () {
       var t = i / (steps - 1);
       /* 二次曲線：前半段維持較小 blur，後半段再加速擴散到原本尾端強度。 */
       var eased = t * t;
-      var radius = FIXED.softNear + (FIXED.softFar - FIXED.softNear) * eased;
+      var radius = (FIXED.softNear + (FIXED.softFar - FIXED.softNear) * eased) * opts.blurMul
+                 + nearExtra * (1 - t);
 
       sctx.clearRect(0, 0, w, h);
       sctx.globalCompositeOperation = 'source-over';
@@ -253,7 +288,15 @@ window.ShadowPlugin = (function () {
     var cx = state.x;
     var squash = FIXED.squash;
     var trimBottomPad = p.trim ? p.trim.bottom * ph : 0;
-    var shadowGroundY = state.y + trimBottomPad * squash;
+    /* ★ 座標系跟原版不同(移植時漏改，碗型商品出現「底部多一圈色塊」的根因)：
+       原版是由這支 plugin 自己畫照片，照片往下推 trimBottomPad，所以 state.y = 商品「實際腳底」。
+       v13+ 照片是 DOM <img> 撐滿 box，state.y = box 底緣 = 圖檔底緣，
+       商品實際腳底在 state.y - trimBottomPad。沿用原版的「+留白」等於把整組影子往下推了
+       一整段透明留白 —— 接地陰影變成一張往下錯位的完整輪廓，商品下半部是弧形的
+       (碗、球、杯)就會沿著弧線露出一圈。
+       主斜影：投影後的腳底要落在 footY，圖檔底緣(錨點)= footY + 留白 * squash。 */
+    var footY = state.y - trimBottomPad;
+    var shadowGroundY = footY + trimBottomPad * squash;
 
     var trimCenterOffsetX = p.trim ? (p.trim.left - p.trim.right) * pw / 2 : 0;
     var shadowCx = cx + trimCenterOffsetX;
@@ -266,14 +309,29 @@ window.ShadowPlugin = (function () {
     var sph = ph * shadowScaleY;
 
     // 接地補強陰影：商品旋轉時跳過(貼著未旋轉的原始輪廓算，旋轉後角度對不上)
-    if (!rot) {
+    var contactAlpha = CONTACT_ALPHA * opts.contactMul;
+    if (!rot && contactAlpha > 0) {
       var CONTACT_GROW_PX = 3;
       var contactH = ph + CONTACT_GROW_PX;
-      var py = state.y + trimBottomPad;
+      /* 圖檔跟 <img> 對齊(底緣 = state.y)，只靠往下拉長 3px 露出腳底一條細線。
+         ★ 再裁成只留腳底附近一小段：拉長的位移是整張輪廓都有的，商品下半部是弧形時，
+         沒裁的話弧線全程都會露出一圈細邊。 */
+      var CONTACT_BAND_PX = Math.max(6, ph * 0.06);
+      /* 先在離屏畫布裁出腳底那一段(畫布邊界 = 裁切範圍)，再整片 blur 貼回去。
+         ★ 順序不能反過來(先 blur 再 clip)：腳底柔化時 blur 會往兩側擴散，
+         被 clip 的上緣切成一條水平硬邊，在商品旁邊非常明顯。 */
+      var contactBlur = opts.nearSoft * 0.5;
+      var bandTop = footY - CONTACT_BAND_PX;
+      var bandLeft = cx - pw;
+      var band = document.createElement('canvas');
+      band.width = Math.max(1, Math.ceil(pw * 2));
+      band.height = Math.max(1, Math.ceil(CONTACT_BAND_PX + CONTACT_GROW_PX + 2));
+      band.getContext('2d').drawImage(p.tinted, (cx - pw / 2) - bandLeft, (state.y - ph) - bandTop, pw, contactH);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = 0.4;
-      ctx.drawImage(p.tinted, cx - pw / 2, py - ph, pw, contactH);
+      ctx.globalAlpha = Math.min(1, contactAlpha);
+      if (contactBlur > 0 && typeof ctx.filter !== 'undefined') ctx.filter = 'blur(' + contactBlur + 'px)';
+      ctx.drawImage(band, bandLeft, bandTop);
       ctx.restore();
     }
 
@@ -284,10 +342,11 @@ window.ShadowPlugin = (function () {
     var shear = Math.tan(angle * 0.55);
     /* Canvas blur 有約 3倍半徑的可見外擴，預留足夠空間，
        避免遠端大 blur 被離屏 canvas 邊界裁成硬邊。 */
-    var maxSpread = Math.max(soft * 1.8, FIXED.softFar * 3) + 20;
+    var maxSpread = Math.max(soft * 1.8, FIXED.softFar * 3) * Math.max(1, opts.blurMul) + opts.nearSoft * 3 + 20;
 
-    // 光源「中」(angle=0)：只留接地補強陰影，不疊主斜切陰影(直直往下的模糊陰影疊加反而厚重)
-    if (opts.presetName === 'top') return;
+    // 光源接近正中(angle≈0)：主斜影淡出，只留接地補強陰影(直直往下的模糊陰影疊加反而厚重)
+    var mainAlpha = Math.min(1, Math.abs(opts.angle) / MAIN_FADE_DEG);
+    if (mainAlpha <= 0) return;
 
     /* ★ 旋轉後的外接矩形會變大，暫存畫布要跟著放大，否則影子的邊角會被裁掉 */
     var rotRad = rot * Math.PI / 180;
@@ -332,11 +391,13 @@ window.ShadowPlugin = (function () {
 
     ctx.save();
     ctx.beginPath();
-    var clipMarginBelow = 5;
+    /* 腳底那層加了額外 blur 時，往下擴散的部分也要留住，否則會被切出一條水平硬邊 */
+    var clipMarginBelow = 5 + opts.nearSoft * 2;
     var clipSpanX = ctx.canvas.width * 3;
     ctx.rect(shadowCx - clipSpanX, shadowGroundY - clipSpanX, clipSpanX * 2, clipSpanX + clipMarginBelow);
     ctx.clip();
     ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = mainAlpha;
     ctx.drawImage(tmp, shadowCx - anchorX, shadowGroundY - anchorY);
     ctx.restore();
   }
@@ -352,8 +413,9 @@ window.ShadowPlugin = (function () {
       var p = products[state.id];
       drawGroundShadow(ctx, state.id, state, runningMask);
       if (p && p.silhouette) {
-        var pad = p.trim ? p.trim.bottom * state.h : 0;
-        var py = state.y + pad;
+        /* 遮擋遮罩 = 商品實際在畫面上的位置：圖檔底緣就是 box 底緣(state.y)，
+           不可再加留白(原版自己畫照片才需要，見 drawGroundShadow 的說明) */
+        var py = state.y;
         /* ★ 遮擋遮罩也要跟著商品自轉，否則旋轉後會在「舊的方向」把後方商品的影子挖掉 */
         var r = (state.rot || 0) * Math.PI / 180;
         if (r) {
@@ -372,6 +434,9 @@ window.ShadowPlugin = (function () {
   return {
     ANGLE_PRESETS: ANGLE_PRESETS,
     setAngle: setAngle,
+    setBlur: setBlur,
+    setNearSoft: setNearSoft,
+    setContact: setContact,
     setShadowColorRGB: setShadowColorRGB,
     getShadowColorRGB: getShadowColorRGB,
     registerProduct: registerProduct,

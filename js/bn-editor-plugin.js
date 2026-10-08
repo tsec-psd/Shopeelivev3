@@ -138,17 +138,58 @@
     function broadcast(msg){document.querySelectorAll('.preview-block iframe').forEach(function(f){try{f.contentWindow.postMessage(msg,'*');}catch(e){}});}
     function broadcastTo(id,msg){var f=document.getElementById('iframe-'+id);if(f)try{f.contentWindow.postMessage(msg,'*');}catch(e){}}
 
-    /* 陰影光源角度(左/中/右)：全域設定，按鈕在 insertProductUI() 建立 */
-    var _shadowAngleBtns = null;
-    function _syncShadowAngleBtns(){
-      if (!_shadowAngleBtns) return;
-      var cur = window._bnShadowAngle || 'left';
-      _shadowAngleBtns.forEach(function(b){
-        var active = b.dataset.angle === cur;
-        b.style.background = active ? '#ee4d2d' : '#222';
-        b.style.borderColor = active ? '#ee4d2d' : '#444';
-        b.style.color = active ? '#fff' : '#ccc';
-      });
+    /* 陰影光源角度(-90°~90° 滑桿)＋模糊程度：全域設定，控制項在 insertProductUI() 建立。
+       兩者共用 bn-shadow-angle 這一則訊息，所有補送/還原路徑一律走 _shadowMsg()，
+       不會漏掉其中一個。 */
+    function _shadowBlur(){
+      var b = window._bnShadowBlur;
+      return (typeof b === 'number' && isFinite(b) && b >= 0) ? b : 1;
+    }
+    /* _bnShadowAngle 現在存角度數字(負 = 光從左邊來)。舊的暫存檔/Undo 快照存的是
+       'left'/'top'/'right' 字串 → 在這裡換算成對應角度(與 shadow-plugin.js 的
+       ANGLE_PRESETS 相同)，所以讀舊檔外觀不變。 */
+    var SHADOW_ANGLE_PRESETS = { left: -35, top: 0, right: 35 };
+    function _shadowAngleDeg(){
+      var a = window._bnShadowAngle;
+      if (typeof a === 'string') a = SHADOW_ANGLE_PRESETS[a];
+      a = parseFloat(a);
+      return isFinite(a) ? Math.max(-90, Math.min(90, a)) : SHADOW_ANGLE_PRESETS.left;
+    }
+    /* 腳底柔化(px，0 = 預設)、接地陰影濃度(倍率，1 = 預設)：同為全域陰影設定 */
+    function _shadowNum(v, def){ return (typeof v === 'number' && isFinite(v) && v >= 0) ? v : def; }
+    function _shadowNearSoft(){ return _shadowNum(window._bnShadowNearSoft, 0); }
+    function _shadowContact(){ return _shadowNum(window._bnShadowContact, 1); }
+    function _shadowMsg(){
+      return {type:'bn-shadow-angle', preset: _shadowAngleDeg(), blur: _shadowBlur(),
+              nearSoft: _shadowNearSoft(), contact: _shadowContact()};
+    }
+    function _shadowAngleLabel(deg){
+      if (deg === 0) return '正中';
+      return (deg < 0 ? '左 ' : '右 ') + Math.abs(deg) + '°';
+    }
+    function _syncShadowBlurSlider(){
+      var inp = document.getElementById('bn-shadow-blur');
+      var val = document.getElementById('bn-shadow-blur-val');
+      var pct = Math.round(_shadowBlur() * 100);
+      if (inp) inp.value = String(pct);
+      if (val) val.textContent = pct + '%';
+      var ni = document.getElementById('bn-shadow-near');
+      var nv = document.getElementById('bn-shadow-near-val');
+      var near = Math.round(_shadowNearSoft());
+      if (ni) ni.value = String(near);
+      if (nv) nv.textContent = String(near);
+      var ci = document.getElementById('bn-shadow-contact');
+      var cv = document.getElementById('bn-shadow-contact-val');
+      var cpct = Math.round(_shadowContact() * 100);
+      if (ci) ci.value = String(cpct);
+      if (cv) cv.textContent = cpct + '%';
+    }
+    function _syncShadowAngleSlider(){
+      var inp = document.getElementById('bn-shadow-angle');
+      var val = document.getElementById('bn-shadow-angle-val');
+      var deg = Math.round(_shadowAngleDeg());
+      if (inp) inp.value = String(deg);
+      if (val) val.textContent = _shadowAngleLabel(deg);
     }
 
     /* ══ LOGO 影像管線 ═══════════════════════════════════════════════
@@ -888,13 +929,26 @@
       sec.innerHTML=[
         '<div class="s-section" style="margin-top:8px">商品圖（最多2張）</div>',
         '<div class="bn-section">',
-        '  <div id="bn-shadow-angle-row" style="display:flex;align-items:center;gap:8px;padding:2px 0 8px;">',
-        '    <span style="font-size:11px;color:var(--text2,#a0a0a0);flex-shrink:0;">陰影光源</span>',
-        '    <div style="display:flex;gap:4px;">',
-        '      <button type="button" class="bn-shadow-angle-btn" data-angle="left" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">左</button>',
-        '      <button type="button" class="bn-shadow-angle-btn" data-angle="top" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">中</button>',
-        '      <button type="button" class="bn-shadow-angle-btn" data-angle="right" style="flex:1;padding:3px 0;font-size:11px;border:1px solid #444;border-radius:4px;background:#222;color:#ccc;cursor:pointer;">右</button>',
-        '    </div>',
+        '  <div id="bn-shadow-angle-row" style="display:flex;align-items:center;gap:8px;padding:2px 0 8px;font-size:11px;color:var(--text2,#a0a0a0);">',
+        '    <span style="flex-shrink:0;">陰影光源</span>',
+        '    <input type="range" id="bn-shadow-angle" min="-90" max="90" step="1" value="-35" style="flex:1;min-width:0;" title="雙擊回到正中">',
+        '    <span id="bn-shadow-angle-val" style="flex-shrink:0;width:34px;text-align:right;">左 35°</span>',
+        '  </div>',
+        '  <div id="bn-shadow-blur-row" style="display:flex;align-items:center;gap:8px;padding:0 0 8px;font-size:11px;color:var(--text2,#a0a0a0);">',
+        '    <span style="flex-shrink:0;">陰影模糊</span>',
+        '    <input type="range" id="bn-shadow-blur" min="0" max="200" step="10" value="100" style="flex:1;min-width:0;">',
+        '    <span id="bn-shadow-blur-val" style="flex-shrink:0;width:34px;text-align:right;">100%</span>',
+        '  </div>',
+        /* 「陰影模糊」只放大往外拖的那段；腳底兩側露出來的那塊要靠這兩條獨立調 */
+        '  <div style="display:flex;align-items:center;gap:8px;padding:0 0 8px;font-size:11px;color:var(--text2,#a0a0a0);" title="柔化商品腳底附近的陰影(碗、鍋這類下窄上寬的商品，兩側露出的那塊)">',
+        '    <span style="flex-shrink:0;">腳底柔化</span>',
+        '    <input type="range" id="bn-shadow-near" min="0" max="30" step="1" value="0" style="flex:1;min-width:0;">',
+        '    <span id="bn-shadow-near-val" style="flex-shrink:0;width:34px;text-align:right;">0</span>',
+        '  </div>',
+        '  <div style="display:flex;align-items:center;gap:8px;padding:0 0 8px;font-size:11px;color:var(--text2,#a0a0a0);" title="貼著腳底的那條細陰影濃度，0% = 不畫">',
+        '    <span style="flex-shrink:0;">接地陰影</span>',
+        '    <input type="range" id="bn-shadow-contact" min="0" max="150" step="10" value="100" style="flex:1;min-width:0;">',
+        '    <span id="bn-shadow-contact-val" style="flex-shrink:0;width:34px;text-align:right;">100%</span>',
         '  </div>',
         '  <button id="bn-prod-open-btn">＋ 上傳商品圖</button>',
         '  <div class="bn-prod-list" id="bn-prod-list"></div>',
@@ -902,16 +956,48 @@
       ].join('');
       if(target)scroll.insertBefore(sec,target);else scroll.appendChild(sec);
       document.getElementById('bn-prod-open-btn').addEventListener('click',openModal);
-      _shadowAngleBtns = sec.querySelectorAll('.bn-shadow-angle-btn');
-      _shadowAngleBtns.forEach(function(b){
-        b.addEventListener('click', function(){
-          window._bnShadowAngle = b.dataset.angle;
-          broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle});
-          _syncShadowAngleBtns();
-          if (typeof saveHistory === 'function') saveHistory();
-        });
+      /* 光源角度滑桿：同模糊滑桿，input 只更新文字，change 才送出。
+         0° 附近 ±5° 吸附到正中，方便拉回舊版「中」的效果；雙擊直接回正中。 */
+      var angInp = document.getElementById('bn-shadow-angle');
+      var angVal = document.getElementById('bn-shadow-angle-val');
+      function _snapAngle(v){ v = parseInt(v, 10) || 0; return Math.abs(v) <= 5 ? 0 : v; }
+      function _commitAngle(v){
+        window._bnShadowAngle = v;
+        broadcast(_shadowMsg());
+        _syncShadowAngleSlider();
+        if (typeof saveHistory === 'function') saveHistory();
+      }
+      angInp.addEventListener('input', function(){ angVal.textContent = _shadowAngleLabel(_snapAngle(this.value)); });
+      angInp.addEventListener('change', function(){ _commitAngle(_snapAngle(this.value)); });
+      angInp.addEventListener('dblclick', function(){ _commitAngle(0); });
+      _syncShadowAngleSlider();
+      /* 模糊滑桿：input 只更新數字，change 才送出(沿用其他滑桿的慣例 ——
+         每次重繪是 12 層 blur × 每個商品 × 每個版位，拖曳中逐格送會卡) */
+      var blurInp = document.getElementById('bn-shadow-blur');
+      var blurVal = document.getElementById('bn-shadow-blur-val');
+      blurInp.addEventListener('input', function(){ blurVal.textContent = this.value + '%'; });
+      blurInp.addEventListener('change', function(){
+        window._bnShadowBlur = (parseFloat(this.value) || 0) / 100;
+        broadcast(_shadowMsg());
+        if (typeof saveHistory === 'function') saveHistory();
       });
-      _syncShadowAngleBtns();
+      var nearInp = document.getElementById('bn-shadow-near');
+      var nearVal = document.getElementById('bn-shadow-near-val');
+      nearInp.addEventListener('input', function(){ nearVal.textContent = this.value; });
+      nearInp.addEventListener('change', function(){
+        window._bnShadowNearSoft = parseFloat(this.value) || 0;
+        broadcast(_shadowMsg());
+        if (typeof saveHistory === 'function') saveHistory();
+      });
+      var conInp = document.getElementById('bn-shadow-contact');
+      var conVal = document.getElementById('bn-shadow-contact-val');
+      conInp.addEventListener('input', function(){ conVal.textContent = this.value + '%'; });
+      conInp.addEventListener('change', function(){
+        window._bnShadowContact = (parseFloat(this.value) || 0) / 100;
+        broadcast(_shadowMsg());
+        if (typeof saveHistory === 'function') saveHistory();
+      });
+      _syncShadowBlurSlider();
       buildModal();
     }
 
@@ -1709,7 +1795,7 @@
         window._bnProducts.forEach(function(p,idx){ broadcastTo(id, _bnBuildProdAddMsg(p, idx, id)); });
         if(window._bnPersons&&window._bnPersons.length){broadcastTo(id,{type:'bn-persons',persons:_bnBuildPersonsPayload(id)});}
         /* 每個 iframe 都有自己獨立的 ShadowPlugin 實例，光源角度要單獨補送 */
-        broadcastTo(id,{type:'bn-shadow-angle',preset:window._bnShadowAngle||'left'});
+        broadcastTo(id,_shadowMsg());
         setTimeout(function(){
           var order=window._bnProducts.slice().sort(function(a,b){return (a.zOrder||0)-(b.zOrder||0);}).map(function(p){return p.id;});
           broadcastTo(id,{type:'bn-product-zorder',order:order});
@@ -1862,7 +1948,7 @@
            payload 的組法(上方 sort/map)與 broadcastZOrder() 逐字相同,改名即等價,無反轉風險。 */
         broadcast({type:'bn-product-zorder', order:order});
         /* 每個 iframe 有自己獨立的 ShadowPlugin 實例，還原/重播時要重新告知光源角度 */
-        broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle||'left'});
+        broadcast(_shadowMsg());
 
         /* ★ 改用 saveHistory()(去抖動+去重+還原中抑制):原本 _bnPushHistoryState(true) 是 force、
            繞過去重,還原時(+200ms、還原鎖已在 100ms 解除)會塞一筆幽靈歷史 → 破壞 undo/redo、
@@ -1875,8 +1961,9 @@
     /* 光源角度(左/中/右)：全域設定，供 bn.html 還原 Undo/暫存狀態後呼叫，
        重新告知每個 iframe 各自獨立的 ShadowPlugin 實例。 */
     window._bnBroadcastShadowAngle = function(){
-      broadcast({type:'bn-shadow-angle', preset: window._bnShadowAngle||'left'});
-      _syncShadowAngleBtns();
+      broadcast(_shadowMsg());
+      _syncShadowAngleSlider();
+      _syncShadowBlurSlider();
     };
   });
 })();

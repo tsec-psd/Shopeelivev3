@@ -891,10 +891,16 @@
       return;
     }
 
-    /* 全域光源角度：左/中/右 三種斜切角度切換 */
+    /* 全域光源角度：-90 ~ 90 的角度數字(舊父層送 'left'/'top'/'right' 字串也接受)
+       ★ 不能寫 `&& e.data.preset`：正中是數字 0，會被當成沒帶值而整則忽略。 */
     if (e.data.type === 'bn-shadow-angle') {
-      if (typeof window.ShadowPlugin !== 'undefined' && e.data.preset) {
+      if (typeof window.ShadowPlugin !== 'undefined' && e.data.preset !== undefined && e.data.preset !== null && e.data.preset !== '') {
         window.ShadowPlugin.setAngle(e.data.preset);
+        /* 模糊程度跟光源角度走同一則訊息(同樣是全域陰影設定，所有補送/還原路徑共用)；
+           舊父層沒帶 blur 時不動，維持引擎預設 1。 */
+        if (e.data.blur !== undefined) window.ShadowPlugin.setBlur(e.data.blur);
+        if (e.data.nearSoft !== undefined) window.ShadowPlugin.setNearSoft(e.data.nearSoft);
+        if (e.data.contact !== undefined) window.ShadowPlugin.setContact(e.data.contact);
         _bnRedrawShadowScene();
       }
       return;
